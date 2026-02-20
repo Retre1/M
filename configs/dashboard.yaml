@@ -1,0 +1,12 @@
+host: "127.0.0.1"
+port: 8050
+debug: false
+refresh_interval_s: 5
+
+pages:
+  - overview
+  - signals
+  - risk
+  - training
+
+theme: darkly  # bootstrap theme

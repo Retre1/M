@@ -1,0 +1,53 @@
+tft:
+  d_model: 32
+  n_heads: 4
+  n_encoder_layers: 1
+  n_decoder_layers: 1
+  dropout: 0.1
+  hidden_continuous_size: 16
+  attention_head_size: 16
+  known_future_inputs:
+    - hour_sin
+    - hour_cos
+    - dow_sin
+    - dow_cos
+    - session_id
+
+agents:
+  trend:
+    hidden_sizes: [128, 128, 64]
+    activation: relu
+    dropout: 0.1
+
+  reversion:
+    hidden_sizes: [128, 128, 64]
+    activation: relu
+    dropout: 0.1
+    z_score_threshold: 3.0
+
+gating:
+  hidden_sizes: [64, 32]
+  n_agents: 3
+
+rl:
+  algorithm: SAC  # SAC | PPO
+  gamma: 0.99
+  learning_rate: 0.0003
+  buffer_size: 100000
+  batch_size: 256
+  ent_coef: auto
+  tau: 0.005
+  train_freq: 4
+  gradient_steps: 4
+  learning_starts: 5000
+
+# Multi-Timeframe settings
+mtf:
+  enabled: true
+  lookback:
+    d1: 5    # 5 daily bars (~1 trading week)
+    h1: 20   # 20 hourly bars (~1 trading day)
+    m5: 20   # 20 five-min bars (~1.7 hours)
+  fusion:
+    dropout: 0.1
+  n_mtf_context: 6

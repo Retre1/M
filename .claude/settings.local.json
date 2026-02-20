@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find:*)",
+      "Bash(python3 -m venv:*)",
+      "Bash(source:*)",
+      "Bash(pip install:*)",
+      "Bash(python3:*)"
+    ]
+  }
+}

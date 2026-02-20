@@ -1,0 +1,23 @@
+{
+  "test_bars": 3697,
+  "initial_balance": 100000,
+  "final_balance": 99822.02685720143,
+  "total_return_pct": -0.177973142798568,
+  "max_drawdown_pct": 0.4849958558427343,
+  "n_trades": 173,
+  "n_steps": 2000,
+  "metrics": {
+    "sharpe_ratio": -0.24112271599402949,
+    "sortino_ratio": -0.3409736794037115,
+    "calmar_ratio": -0.046188950838141465,
+    "max_drawdown": 0.004849958558426866,
+    "max_drawdown_duration": 1545.0,
+    "win_rate": 0.4455,
+    "profit_factor": 0.9572194713294838,
+    "expectancy": -3.433771069417096e-06,
+    "annualized_return": -0.00022442075986717214,
+    "annualized_volatility": 0.0009290476697672435,
+    "total_return": -0.0017797314279844878,
+    "n_trades": 2000.0
+  }
+}

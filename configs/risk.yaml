@@ -1,0 +1,23 @@
+daily_var_limit: 0.02          # 2% of portfolio
+max_drawdown_pct: 0.05         # 5% hard stop
+var_confidence: 0.99
+var_lookback_days: 252
+var_method: historical         # historical | parametric
+
+position_sizing:
+  max_position_pct: 0.10       # 10% of portfolio max
+  kelly_fraction: 0.5          # Half-Kelly
+  min_trades_for_kelly: 30     # Need 30 trades before using Kelly
+  vol_lookback_bars: 20        # ATR lookback for vol scaling
+  min_lot_size: 0.01
+
+cooldown:
+  after_n_losses: 3
+  duration_minutes: 60
+  tilt_drawdown_pct: 0.02      # Rapid drawdown tilt detector
+  tilt_window_minutes: 30
+
+hedging:
+  enabled: true
+  hedge_ratio: 0.5             # Hedge 50% on VaR breach
+  hedge_instrument: null       # null = close position instead
