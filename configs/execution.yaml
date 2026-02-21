@@ -1,0 +1,26 @@
+order_type: limit              # market | limit
+limit_offset_pips: 0.5        # Place limit order this much better than market
+limit_timeout_s: 30            # Cancel unfilled limit after this
+limit_fallback: market         # market | cancel -- what to do on timeout
+
+slippage:
+  max_slippage_pips: 1.0       # Reject fill if slippage exceeds this
+  track_history: true
+
+session_filter:
+  enabled: true
+  allowed_sessions:
+    - london
+    - new_york
+    - overlap_ln
+
+news_blackout:
+  enabled: true
+  blackout_minutes_before: 15
+  blackout_minutes_after: 10
+  calendar_source: config      # config | external
+
+retry:
+  max_retries: 3
+  backoff_base_ms: 500
+  backoff_max_ms: 5000

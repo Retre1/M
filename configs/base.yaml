@@ -1,0 +1,14 @@
+seed: 42
+device: auto  # auto | cuda | mps | cpu
+
+paths:
+  data_dir: ./data
+  models_dir: ./models
+  logs_dir: ./logs
+
+logging:
+  level: INFO
+  format: json  # json | console
+  file: ${paths.logs_dir}/apexfx.log
+  rotation_mb: 50
+  backup_count: 5

@@ -1,0 +1,50 @@
+curriculum:
+  stages:
+    - name: synthetic_clean
+      description: "Clean synthetic data with clear regimes"
+      total_timesteps: 200000
+      data_source: synthetic
+      synthetic_params:
+        n_steps: 20000
+        mu: 0.0001
+        sigma: 0.01
+        noise_std: 0.0
+        black_swan_intensity: 0.0
+
+    - name: noisy_real
+      description: "Noisy synthetic + simple real data"
+      total_timesteps: 400000
+      data_source: mixed
+      synthetic_params:
+        noise_std: 0.005
+        black_swan_intensity: 0.0
+      warm_start: true
+
+    - name: full_real
+      description: "Full real data with black swans"
+      total_timesteps: 600000
+      data_source: real
+      synthetic_params:
+        black_swan_intensity: 0.001
+        black_swan_magnitude_std: 5.0
+      warm_start: true
+
+walk_forward:
+  train_window_days: 252
+  test_window_days: 63
+  step_size_days: 63
+  n_folds: null  # null = use all data
+  retrain_each_fold: true
+
+evaluation:
+  eval_freq: 10000
+  n_eval_episodes: 10
+  deterministic: true
+
+checkpointing:
+  save_freq: 50000
+  keep_best_n: 3
+
+early_stopping:
+  patience: 10
+  min_delta: 0.01
