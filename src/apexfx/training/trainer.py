@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import torch
 from stable_baselines3 import SAC, PPO
@@ -11,6 +13,7 @@ from stable_baselines3.common.callbacks import CallbackList
 from stable_baselines3.common.vec_env import DummyVecEnv
 
 from apexfx.config.schema import AppConfig, RLAlgorithm
+from apexfx.data.mtf_synthetic import resample_real_data
 from apexfx.env.forex_env import ForexTradingEnv
 from apexfx.env.mtf_forex_env import MTFForexTradingEnv
 from apexfx.env.reward import CalmarWeightedReward, DifferentialSharpeReward
@@ -24,6 +27,7 @@ from apexfx.training.callbacks import (
 )
 from apexfx.training.curriculum import CurriculumManager, MTFStageData
 from apexfx.utils.logging import get_logger
+from apexfx.utils.metrics import compute_all_metrics
 
 logger = get_logger(__name__)
 
@@ -94,6 +98,9 @@ class Trainer:
         best_path.mkdir(parents=True, exist_ok=True)
         self._model.save(str(best_path / "final_model"))
         logger.info("Training complete")
+
+        # Auto-backtest after training
+        self._run_backtest(best_path)
 
     def _train_single_tf_stage(self, stage_data) -> None:
         """Train a single-timeframe stage (original behavior)."""
@@ -342,6 +349,157 @@ class Trainer:
                 min_delta=self._config.training.early_stopping.min_delta,
             ),
         ])
+
+    def _run_backtest(self, save_dir: Path) -> None:
+        """Run automatic backtest after training and save results."""
+        if self._model is None:
+            logger.warning("No model to backtest — skipping")
+            return
+
+        if self._real_data is None or self._real_data.empty:
+            logger.warning("No real data available for backtest — skipping")
+            return
+
+        logger.info("=" * 60)
+        logger.info("Running post-training backtest (out-of-sample: last 30%)")
+        logger.info("=" * 60)
+
+        try:
+            # Compute features on full real data
+            features = self._feature_pipeline.compute(self._real_data)
+            n_features = min(self._feature_pipeline.n_features, 30)
+
+            # Split: last 30% for out-of-sample test
+            split_idx = int(len(features) * 0.7)
+            test_data = features.iloc[split_idx:].reset_index(drop=True)
+            logger.info("Test data", n_bars=len(test_data), split="last 30%")
+
+            if len(test_data) < 50:
+                logger.warning("Too few test bars for reliable backtest", n_bars=len(test_data))
+                return
+
+            # Build evaluation environment (no reward normalization, no drawdown kill)
+            from apexfx.env.reward import DifferentialSharpeReward
+
+            if self._mtf_enabled:
+                d1_test, m5_test = resample_real_data(test_data)
+                d1_features = self._feature_pipeline.compute(d1_test)
+                m5_features = self._feature_pipeline.compute(m5_test)
+                mtf_cfg = self._config.model.mtf
+
+                eval_env = MTFForexTradingEnv(
+                    h1_data=test_data,
+                    d1_data=d1_features,
+                    m5_data=m5_features,
+                    initial_balance=100_000.0,
+                    n_market_features=n_features,
+                    d1_lookback=mtf_cfg.lookback.d1,
+                    h1_lookback=mtf_cfg.lookback.h1,
+                    m5_lookback=mtf_cfg.lookback.m5,
+                    reward_fn=DifferentialSharpeReward(),
+                    max_drawdown_pct=1.0,  # Don't terminate during eval
+                )
+            else:
+                eval_env = ForexTradingEnv(
+                    data=test_data,
+                    initial_balance=100_000.0,
+                    n_market_features=n_features,
+                    lookback=self._config.data.feature_window,
+                    reward_fn=DifferentialSharpeReward(),
+                    max_drawdown_pct=1.0,  # Don't terminate during eval
+                )
+
+            # Run backtest loop
+            obs, info = eval_env.reset()
+            done = False
+            returns: list[float] = []
+            equity: list[float] = [100_000.0]
+            trades: list[dict] = []
+            prev_value = 100_000.0
+            prev_position = 0.0
+            step_count = 0
+
+            while not done:
+                action, _ = self._model.predict(obs, deterministic=True)
+                obs, reward, terminated, truncated, info = eval_env.step(action)
+                done = terminated or truncated
+
+                current_value = info.get("portfolio_value", prev_value)
+                position = info.get("position", 0.0)
+
+                if prev_value > 0:
+                    step_return = (current_value - prev_value) / prev_value
+                    returns.append(step_return)
+
+                # Track trade transitions
+                if abs(position) > 0 and abs(prev_position) == 0:
+                    trades.append({"step": step_count, "type": "open", "position": float(position)})
+                elif abs(position) == 0 and abs(prev_position) > 0:
+                    trades.append({"step": step_count, "type": "close", "pnl": float(current_value - prev_value)})
+
+                equity.append(current_value)
+                prev_value = current_value
+                prev_position = position
+                step_count += 1
+
+            # Compute metrics
+            returns_arr = np.array(returns) if returns else np.array([0.0])
+            metrics = compute_all_metrics(returns_arr)
+
+            final_value = equity[-1]
+            total_return_pct = (final_value - 100_000) / 100_000 * 100
+
+            # Max drawdown from equity curve
+            eq_arr = np.array(equity)
+            peak = np.maximum.accumulate(eq_arr)
+            dd_pct = ((peak - eq_arr) / peak * 100)
+            max_dd_pct = float(np.max(dd_pct)) if len(dd_pct) > 0 else 0.0
+
+            n_trades = len([t for t in trades if t["type"] == "open"])
+
+            # Print results
+            logger.info("=" * 60)
+            logger.info("BACKTEST RESULTS (Out-of-Sample: last 30%)")
+            logger.info("=" * 60)
+            logger.info(f"  Test period:        {len(test_data)} bars")
+            logger.info(f"  Initial balance:    $100,000.00")
+            logger.info(f"  Final balance:      ${final_value:,.2f}")
+            logger.info(f"  Total return:       {total_return_pct:+.2f}%")
+            logger.info(f"  Max drawdown:       {max_dd_pct:.2f}%")
+            logger.info(f"  Sharpe ratio:       {metrics.get('sharpe_ratio', 0):.4f}")
+            logger.info(f"  Sortino ratio:      {metrics.get('sortino_ratio', 0):.4f}")
+            logger.info(f"  Calmar ratio:       {metrics.get('calmar_ratio', 0):.4f}")
+            logger.info(f"  Win rate:           {metrics.get('win_rate', 0):.2%}")
+            logger.info(f"  Profit factor:      {metrics.get('profit_factor', 0):.4f}")
+            logger.info(f"  Total trades:       {n_trades}")
+            logger.info(f"  Steps:              {step_count}")
+            logger.info("=" * 60)
+
+            # Save results to JSON
+            results = {
+                "test_bars": len(test_data),
+                "initial_balance": 100_000,
+                "final_balance": float(final_value),
+                "total_return_pct": float(total_return_pct),
+                "max_drawdown_pct": float(max_dd_pct),
+                "n_trades": n_trades,
+                "n_steps": step_count,
+                "mtf_enabled": self._mtf_enabled,
+                "metrics": {k: float(v) for k, v in metrics.items()},
+                "equity_curve": [float(e) for e in equity],
+                "trades": trades,
+            }
+
+            results_path = save_dir / "backtest_results.json"
+            with open(results_path, "w") as f:
+                json.dump(results, f, indent=2)
+
+            logger.info(f"Backtest results saved to {results_path}")
+
+        except Exception as e:
+            logger.error("Backtest failed (training succeeded though)", error=str(e))
+            import traceback
+            traceback.print_exc()
 
     @property
     def model(self) -> SAC | PPO | None:
