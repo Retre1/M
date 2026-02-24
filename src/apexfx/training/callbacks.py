@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from stable_baselines3.common.callbacks import BaseCallback
 
 from apexfx.utils.logging import get_logger
 from apexfx.utils.metrics import compute_all_metrics
+
+if TYPE_CHECKING:
+    from apexfx.training.mlflow_logger import MLflowLogger
 
 logger = get_logger(__name__)
 
@@ -127,6 +130,67 @@ class EarlyStoppingCallback(BaseCallback):
                     best_reward=self._best_reward,
                 )
                 return False
+
+        return True
+
+
+class MLflowCallback(BaseCallback):
+    """Push SB3 step metrics to an active MLflow run.
+
+    Designed to be composed alongside :class:`MetricsCallback`.  It reads the
+    same episode info dict that SB3 populates and logs a curated subset to
+    MLflow at ``log_freq`` intervals so the MLflow UI doesn't receive tens of
+    millions of data points.
+
+    Parameters
+    ----------
+    mlflow_logger:
+        The shared :class:`~apexfx.training.mlflow_logger.MLflowLogger`
+        instance for the current training run.
+    log_freq:
+        Push metrics to MLflow every N timesteps (default from config).
+    stage_idx:
+        Current curriculum stage index — used as a metric namespace prefix
+        (e.g. ``stage_0/episode_return``).
+    """
+
+    def __init__(
+        self,
+        mlflow_logger: MLflowLogger,
+        log_freq: int = 10_000,
+        stage_idx: int = 0,
+        verbose: int = 0,
+    ) -> None:
+        super().__init__(verbose)
+        self._mlflow = mlflow_logger
+        self._log_freq = log_freq
+        self._stage_idx = stage_idx
+        self._episode_returns: list[float] = []
+        self._episode_lengths: list[int] = []
+        self._drawdowns: list[float] = []
+
+    def _on_step(self) -> bool:
+        infos = self.locals.get("infos", [])
+        for info in infos:
+            if "episode" in info:
+                ep = info["episode"]
+                self._episode_returns.append(float(ep["r"]))
+                self._episode_lengths.append(int(ep["l"]))
+                if "drawdown" in info:
+                    self._drawdowns.append(float(info["drawdown"]))
+
+        if self.num_timesteps % self._log_freq == 0 and self._episode_returns:
+            prefix = f"stage_{self._stage_idx}"
+            recent_r = self._episode_returns[-20:]
+            metrics: dict[str, float] = {
+                f"{prefix}/mean_return": float(np.mean(recent_r)),
+                f"{prefix}/std_return": float(np.std(recent_r)),
+                f"{prefix}/n_episodes": float(len(self._episode_returns)),
+            }
+            if self._drawdowns:
+                metrics[f"{prefix}/mean_drawdown"] = float(np.mean(self._drawdowns[-20:]))
+
+            self._mlflow.log_metrics(metrics, step=self.num_timesteps)
 
         return True
 

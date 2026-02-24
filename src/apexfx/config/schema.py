@@ -29,11 +29,22 @@ class LoggingConfig(BaseModel):
     backup_count: int = 5
 
 
+class MLflowConfig(BaseModel):
+    enabled: bool = False
+    tracking_uri: str = "./mlruns"
+    experiment_name: str = "apexfx_quantum"
+    # Log model checkpoints as MLflow artifacts (heavier but enables model registry)
+    log_artifacts: bool = False
+    # How often (in SB3 timesteps) to push metrics to MLflow
+    log_freq: int = 10_000
+
+
 class BaseConfig(BaseModel):
     seed: int = 42
     device: DeviceType = DeviceType.AUTO
     paths: PathsConfig = Field(default_factory=PathsConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
+    mlflow: MLflowConfig = Field(default_factory=MLflowConfig)
 
 
 # --- Symbols ---
@@ -92,13 +103,13 @@ class DataConfig(BaseModel):
 
 
 class TFTConfig(BaseModel):
-    d_model: int = 64
-    n_heads: int = 4
-    n_encoder_layers: int = 3
-    n_decoder_layers: int = 1
+    d_model: int = 128
+    n_heads: int = 8
+    n_encoder_layers: int = 2
+    n_decoder_layers: int = 2
     dropout: float = 0.1
-    hidden_continuous_size: int = 16
-    attention_head_size: int = 16
+    hidden_continuous_size: int = 64
+    attention_head_size: int = 64
     known_future_inputs: list[str] = Field(
         default_factory=lambda: ["hour_sin", "hour_cos", "dow_sin", "dow_cos", "session_id"]
     )
