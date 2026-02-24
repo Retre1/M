@@ -9,6 +9,11 @@ feature_window: 20
 tick_buffer_size: 100000
 bar_history_days: 750
 
+# Last 20% of historical data is locked as a sacred OOS test set.
+# NEVER use this data during training, walk-forward, or hyperparameter search.
+# Only unlock it with OOSGuard.unlock_oos() for final production evaluation.
+oos_fraction: 0.2
+
 storage:
   format: parquet
   compression: snappy

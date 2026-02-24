@@ -35,6 +35,12 @@ walk_forward:
   step_size_days: 63
   n_folds: null  # null = use all data
   retrain_each_fold: true
+  # Purge: bars dropped between train-end and test-start to stop feature look-ahead.
+  # SpectralExtractor FFT window = 256 H1 bars → 11 days covers worst case.
+  purge_days: 11
+  # Embargo: days after each test window before that region can re-enter training.
+  # Prevents label/feature leakage from the test boundary into the next fold's training.
+  embargo_days: 5
 
 evaluation:
   eval_freq: 10000
