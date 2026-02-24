@@ -23,10 +23,8 @@ from apexfx.models.ensemble.hive_mind import HiveMindExtractor, MTFHiveMindExtra
 from apexfx.training.callbacks import (
     EarlyStoppingCallback,
     MetricsCallback,
-    MLflowCallback,
     TradingCheckpointCallback,
 )
-from apexfx.training.mlflow_logger import MLflowLogger
 from apexfx.training.curriculum import CurriculumManager, MTFStageData
 from apexfx.utils.logging import get_logger
 from apexfx.utils.metrics import compute_all_metrics
@@ -50,7 +48,6 @@ class Trainer:
         self._feature_pipeline = FeaturePipeline()
         self._device = self._resolve_device()
         self._model: SAC | PPO | None = None
-        self._mlflow = MLflowLogger(config)
 
     def _resolve_device(self) -> str:
         dev = self._config.base.device.value
@@ -77,7 +74,6 @@ class Trainer:
             mtf_enabled=self._mtf_enabled,
         )
 
-        total_steps = 0
         for stage_data in curriculum.stages():
             logger.info(
                 "Training stage",
@@ -85,39 +81,26 @@ class Trainer:
                 name=stage_data.stage.name,
                 timesteps=stage_data.stage.total_timesteps,
             )
-            self._mlflow.log_curriculum_stage_start(
-                stage_data.stage_idx,
-                stage_data.stage.name,
-                stage_data.stage.total_timesteps,
-            )
 
             if self._mtf_enabled and isinstance(stage_data, MTFStageData):
                 self._train_mtf_stage(stage_data)
             else:
                 self._train_single_tf_stage(stage_data)
 
-            total_steps += stage_data.stage.total_timesteps
-            self._mlflow.log_metric("training/total_timesteps", total_steps, step=total_steps)
-
             # Save stage checkpoint
             save_path = Path(self._config.base.paths.models_dir) / "checkpoints"
             save_path.mkdir(parents=True, exist_ok=True)
-            ckpt_path = save_path / f"stage_{stage_data.stage_idx}"
-            self._model.save(str(ckpt_path))
-            self._mlflow.log_artifact(str(ckpt_path) + ".zip")
+            self._model.save(str(save_path / f"stage_{stage_data.stage_idx}"))
             logger.info("Stage complete", stage=stage_data.stage_idx)
 
         # Save final model
         best_path = Path(self._config.base.paths.models_dir) / "best"
         best_path.mkdir(parents=True, exist_ok=True)
         self._model.save(str(best_path / "final_model"))
-        self._mlflow.log_artifact(str(best_path / "final_model.zip"))
         logger.info("Training complete")
 
         # Auto-backtest after training
         self._run_backtest(best_path)
-
-        self._mlflow.end_run()
 
     def _train_single_tf_stage(self, stage_data) -> None:
         """Train a single-timeframe stage (original behavior)."""
@@ -354,7 +337,7 @@ class Trainer:
         save_dir = str(
             Path(self._config.base.paths.models_dir) / "checkpoints" / f"stage_{stage_idx}"
         )
-        callbacks: list = [
+        return CallbackList([
             MetricsCallback(),
             TradingCheckpointCallback(
                 save_freq=self._config.training.checkpointing.save_freq,
@@ -365,14 +348,7 @@ class Trainer:
                 patience=self._config.training.early_stopping.patience,
                 min_delta=self._config.training.early_stopping.min_delta,
             ),
-        ]
-        if self._mlflow.enabled:
-            callbacks.append(MLflowCallback(
-                mlflow_logger=self._mlflow,
-                log_freq=self._config.base.mlflow.log_freq,
-                stage_idx=stage_idx,
-            ))
-        return CallbackList(callbacks)
+        ])
 
     def _run_backtest(self, save_dir: Path) -> None:
         """Run automatic backtest after training and save results."""
@@ -519,8 +495,6 @@ class Trainer:
                 json.dump(results, f, indent=2)
 
             logger.info(f"Backtest results saved to {results_path}")
-            self._mlflow.log_backtest_results(results)
-            self._mlflow.log_artifact(str(results_path))
 
         except Exception as e:
             logger.error("Backtest failed (training succeeded though)", error=str(e))

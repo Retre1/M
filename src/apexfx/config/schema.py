@@ -29,22 +29,11 @@ class LoggingConfig(BaseModel):
     backup_count: int = 5
 
 
-class MLflowConfig(BaseModel):
-    enabled: bool = False
-    tracking_uri: str = "./mlruns"
-    experiment_name: str = "apexfx_quantum"
-    # Log model checkpoints as MLflow artifacts (heavier but enables model registry)
-    log_artifacts: bool = False
-    # How often (in SB3 timesteps) to push metrics to MLflow
-    log_freq: int = 10_000
-
-
 class BaseConfig(BaseModel):
     seed: int = 42
     device: DeviceType = DeviceType.AUTO
     paths: PathsConfig = Field(default_factory=PathsConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
-    mlflow: MLflowConfig = Field(default_factory=MLflowConfig)
 
 
 # --- Symbols ---
@@ -91,10 +80,6 @@ class DataConfig(BaseModel):
     feature_window: int = 100
     tick_buffer_size: int = 100_000
     bar_history_days: int = 750
-    # Fraction of total data reserved as a sacred out-of-sample test set.
-    # This data must NEVER be used during training, validation, or hyperparameter tuning.
-    # Only unlock it for the final evaluation of a fully-trained, production-ready model.
-    oos_fraction: float = 0.2
     storage: StorageConfig = Field(default_factory=StorageConfig)
     collection: CollectionConfig = Field(default_factory=CollectionConfig)
 
@@ -103,13 +88,13 @@ class DataConfig(BaseModel):
 
 
 class TFTConfig(BaseModel):
-    d_model: int = 128
-    n_heads: int = 8
-    n_encoder_layers: int = 2
-    n_decoder_layers: int = 2
+    d_model: int = 64
+    n_heads: int = 4
+    n_encoder_layers: int = 3
+    n_decoder_layers: int = 1
     dropout: float = 0.1
-    hidden_continuous_size: int = 64
-    attention_head_size: int = 64
+    hidden_continuous_size: int = 16
+    attention_head_size: int = 16
     known_future_inputs: list[str] = Field(
         default_factory=lambda: ["hour_sin", "hour_cos", "dow_sin", "dow_cos", "session_id"]
     )
@@ -201,12 +186,6 @@ class WalkForwardConfig(BaseModel):
     step_size_days: int = 63
     n_folds: int | None = None
     retrain_each_fold: bool = True
-    # Purge: bars removed between train end and test start to prevent feature look-ahead.
-    # SpectralExtractor uses FFT window of 256 bars → 11 H1 trading days covers this.
-    purge_days: int = 11
-    # Embargo: bars skipped after each test window before the next fold may include
-    # that region in training. Prevents label leakage when features look forward.
-    embargo_days: int = 5
 
 
 class EvaluationConfig(BaseModel):

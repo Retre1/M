@@ -1,14 +1,11 @@
 tft:
-  # Increased from 32 → 128: gives the transformer enough capacity to model
-  # 40+ features across multiple market regimes. 32 was empirically too small
-  # and caused under-fitting on noisy mixed / full-real training stages.
-  d_model: 128
-  n_heads: 8           # was 4 — more heads for richer multi-scale attention
-  n_encoder_layers: 2  # was 1 — deeper temporal encoding
-  n_decoder_layers: 2  # was 1 — deeper future-context decoding
+  d_model: 32
+  n_heads: 4
+  n_encoder_layers: 1
+  n_decoder_layers: 1
   dropout: 0.1
-  hidden_continuous_size: 64   # was 16 — proportional to d_model
-  attention_head_size: 64      # was 16 — d_model // n_heads for full rank
+  hidden_continuous_size: 16
+  attention_head_size: 16
   known_future_inputs:
     - hour_sin
     - hour_cos

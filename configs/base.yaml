@@ -12,12 +12,3 @@ logging:
   file: ${paths.logs_dir}/apexfx.log
   rotation_mb: 50
   backup_count: 5
-
-# MLflow experiment tracking.
-# Set enabled: true and run `mlflow ui` to view runs at http://localhost:5000
-mlflow:
-  enabled: false           # flip to true to activate tracking
-  tracking_uri: ./mlruns   # local filesystem or remote: http://mlflow-server:5000
-  experiment_name: apexfx_quantum
-  log_artifacts: false     # true = upload model checkpoints to MLflow (slow)
-  log_freq: 10000          # push metrics to MLflow every N SB3 timesteps

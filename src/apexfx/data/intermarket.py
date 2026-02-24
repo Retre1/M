@@ -11,14 +11,11 @@ from apexfx.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-# Default intermarket instruments and their MT5/OANDA symbol name candidates.
-# The provider tries each name in order and uses the first one that resolves.
+# Default intermarket instruments and their MT5 symbol names
 INTERMARKET_SYMBOLS: dict[str, list[str]] = {
     "DXY": ["DXY", "USDX", "DX"],
     "XAUUSD": ["XAUUSD", "GOLD"],
     "US10Y": ["US10Y", "TNX", "US10YR"],
-    # S&P 500 — different brokers use different symbol names
-    "SP500": ["SP500", "US500", "SPX500", "SPXUSD", "SP500m", ".SPX", "SPX"],
 }
 
 
