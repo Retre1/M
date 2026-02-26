@@ -6,7 +6,7 @@ session-dependent activity, and clustered black swan events.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
@@ -53,8 +53,8 @@ class SyntheticDataGenerator:
         dt: float = 1.0 / (252 * 24),  # Hourly
     ) -> pd.DataFrame:
         """Generate price series via Geometric Brownian Motion."""
-        Z = self._rng.standard_normal(n_steps)
-        log_returns = (mu - 0.5 * sigma**2) * dt + sigma * np.sqrt(dt) * Z
+        z_samples = self._rng.standard_normal(n_steps)
+        log_returns = (mu - 0.5 * sigma**2) * dt + sigma * np.sqrt(dt) * z_samples
 
         log_prices = np.zeros(n_steps + 1)
         log_prices[0] = np.log(initial_price)
@@ -78,14 +78,14 @@ class SyntheticDataGenerator:
         """
         garch = garch or GARCHParams()
 
-        Z = self._rng.standard_normal(n_steps)
+        z_samples = self._rng.standard_normal(n_steps)
         log_returns = np.zeros(n_steps)
         variances = np.zeros(n_steps)
         variances[0] = garch.initial_var
 
         for t in range(n_steps):
             sigma_t = np.sqrt(variances[t])
-            log_returns[t] = (mu - 0.5 * variances[t]) * dt + sigma_t * np.sqrt(dt) * Z[t]
+            log_returns[t] = (mu - 0.5 * variances[t]) * dt + sigma_t * np.sqrt(dt) * z_samples[t]
             if t < n_steps - 1:
                 variances[t + 1] = (
                     garch.omega
@@ -137,7 +137,7 @@ class SyntheticDataGenerator:
             duration = max(10, min(duration, n_steps - current_step))
 
             end_step = current_step + duration
-            Z = self._rng.standard_normal(duration)
+            z_samples = self._rng.standard_normal(duration)
 
             if use_garch:
                 # GARCH within regime — vol targets regime.sigma but clusters
@@ -146,7 +146,7 @@ class SyntheticDataGenerator:
                     t = current_step + i
                     sigma_t = np.sqrt(current_var)
                     log_returns[t] = (
-                        (regime.mu - 0.5 * current_var) * dt + sigma_t * np.sqrt(dt) * Z[i]
+                        (regime.mu - 0.5 * current_var) * dt + sigma_t * np.sqrt(dt) * z_samples[i]
                     )
                     # GARCH update with mean-reversion to regime target
                     current_var = (
@@ -157,7 +157,7 @@ class SyntheticDataGenerator:
             else:
                 log_returns[current_step:end_step] = (
                     (regime.mu - 0.5 * regime.sigma**2) * dt
-                    + regime.sigma * np.sqrt(dt) * Z
+                    + regime.sigma * np.sqrt(dt) * z_samples
                 )
 
             regime_labels[current_step:end_step] = regime_idx
@@ -208,7 +208,7 @@ class SyntheticDataGenerator:
 
         # Build full event list including clusters
         all_events: list[tuple[int, float]] = []
-        for idx, magnitude in zip(event_indices, event_magnitudes):
+        for idx, magnitude in zip(event_indices, event_magnitudes, strict=False):
             all_events.append((int(idx), float(magnitude)))
 
             # Cluster generation: same direction, decaying magnitude
@@ -308,8 +308,8 @@ class SyntheticDataGenerator:
         resist_dist = np.full(n, np.nan)
         for i in range(n):
             price = close[i]
-            below = [l for l in merged if l < price]
-            above = [l for l in merged if l > price]
+            below = [level for level in merged if level < price]
+            above = [level for level in merged if level > price]
             if below:
                 support_dist[i] = (price - max(below)) / price
             if above:

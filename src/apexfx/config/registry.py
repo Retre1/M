@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import threading
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from apexfx.config.loader import load_config
-from apexfx.config.schema import AppConfig
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from apexfx.config.schema import AppConfig
 
 _lock = threading.Lock()
 _config: AppConfig | None = None

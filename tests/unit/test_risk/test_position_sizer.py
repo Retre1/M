@@ -1,7 +1,5 @@
 """Tests for position sizer."""
 
-import numpy as np
-import pytest
 
 from apexfx.risk.position_sizer import PositionSizer
 

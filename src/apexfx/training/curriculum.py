@@ -7,8 +7,8 @@ from dataclasses import dataclass
 import pandas as pd
 
 from apexfx.config.schema import CurriculumStage, TrainingConfig
-from apexfx.data.synthetic import RegimeParams, SyntheticDataGenerator
 from apexfx.data.mtf_synthetic import MTFSyntheticGenerator, resample_real_data
+from apexfx.data.synthetic import RegimeParams, SyntheticDataGenerator
 from apexfx.utils.logging import get_logger
 
 logger = get_logger(__name__)

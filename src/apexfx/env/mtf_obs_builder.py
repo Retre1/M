@@ -7,11 +7,16 @@ the agent understand inter-timeframe relationships.
 
 from __future__ import annotations
 
-import numpy as np
-import pandas as pd
+from typing import TYPE_CHECKING
 
-from apexfx.data.mtf_aligner import MTFDataAligner, MTFSlice
+import numpy as np
+
 from apexfx.utils.time_utils import encode_time_features, get_session_id
+
+if TYPE_CHECKING:
+    import pandas as pd
+
+    from apexfx.data.mtf_aligner import MTFSlice
 
 
 class MTFObservationBuilder:
@@ -110,9 +115,15 @@ class MTFObservationBuilder:
         m5_time = self._extract_time_window(mtf_slice.m5, self.m5_lookback)
 
         # Scalar features from H1 (latest bar)
-        trend = self._extract_latest(h1_features, h1_idx, self.trend_columns, self.n_trend_features)
-        reversion = self._extract_latest(h1_features, h1_idx, self.reversion_columns, self.n_reversion_features)
-        regime = self._extract_latest(h1_features, h1_idx, self.regime_columns, self.n_regime_features)
+        trend = self._extract_latest(
+            h1_features, h1_idx, self.trend_columns, self.n_trend_features,
+        )
+        reversion = self._extract_latest(
+            h1_features, h1_idx, self.reversion_columns, self.n_reversion_features,
+        )
+        regime = self._extract_latest(
+            h1_features, h1_idx, self.regime_columns, self.n_regime_features,
+        )
 
         # Position state
         position_state = np.array([
@@ -161,7 +172,10 @@ class MTFObservationBuilder:
             ohlcv_cols = [c for c in ["open", "high", "low", "close", "volume"] if c in df.columns]
             avail_cols = ohlcv_cols
 
-        data = df[avail_cols].values.astype(np.float32) if len(avail_cols) > 0 else np.zeros((len(df), 1), dtype=np.float32)
+        if len(avail_cols) > 0:
+            data = df[avail_cols].values.astype(np.float32)
+        else:
+            data = np.zeros((len(df), 1), dtype=np.float32)
 
         # Pad columns to n_market_features
         if data.shape[1] < self.n_market_features:

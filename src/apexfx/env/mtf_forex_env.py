@@ -7,17 +7,20 @@ context from D1 (higher TF trend) and M5 (lower TF detail).
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import gymnasium as gym
 import numpy as np
-import pandas as pd
 from gymnasium import spaces
 
 from apexfx.data.mtf_aligner import MTFDataAligner
 from apexfx.env.forex_env import ForexTradingEnv
 from apexfx.env.mtf_obs_builder import MTFObservationBuilder
-from apexfx.env.reward import BaseRewardFunction
+
+if TYPE_CHECKING:
+    import pandas as pd
+
+    from apexfx.env.reward import BaseRewardFunction
 
 
 class MTFForexTradingEnv(ForexTradingEnv):
@@ -114,18 +117,21 @@ class MTFForexTradingEnv(ForexTradingEnv):
         m5_market_size = m5_lookback * n_market_features
         m5_time_size = m5_lookback * n_time_features
 
+        box = spaces.Box
+        inf = np.inf
+        f32 = np.float32
         self.observation_space = spaces.Dict({
-            "d1_market_features": spaces.Box(-np.inf, np.inf, shape=(d1_market_size,), dtype=np.float32),
-            "d1_time_features": spaces.Box(-np.inf, np.inf, shape=(d1_time_size,), dtype=np.float32),
-            "h1_market_features": spaces.Box(-np.inf, np.inf, shape=(h1_market_size,), dtype=np.float32),
-            "h1_time_features": spaces.Box(-np.inf, np.inf, shape=(h1_time_size,), dtype=np.float32),
-            "m5_market_features": spaces.Box(-np.inf, np.inf, shape=(m5_market_size,), dtype=np.float32),
-            "m5_time_features": spaces.Box(-np.inf, np.inf, shape=(m5_time_size,), dtype=np.float32),
-            "trend_features": spaces.Box(-np.inf, np.inf, shape=(n_trend_features,), dtype=np.float32),
-            "reversion_features": spaces.Box(-np.inf, np.inf, shape=(n_reversion_features,), dtype=np.float32),
-            "regime_features": spaces.Box(-np.inf, np.inf, shape=(n_regime_features,), dtype=np.float32),
-            "position_state": spaces.Box(-np.inf, np.inf, shape=(4,), dtype=np.float32),
-            "mtf_context": spaces.Box(-np.inf, np.inf, shape=(n_mtf_context,), dtype=np.float32),
+            "d1_market_features": box(-inf, inf, shape=(d1_market_size,), dtype=f32),
+            "d1_time_features": box(-inf, inf, shape=(d1_time_size,), dtype=f32),
+            "h1_market_features": box(-inf, inf, shape=(h1_market_size,), dtype=f32),
+            "h1_time_features": box(-inf, inf, shape=(h1_time_size,), dtype=f32),
+            "m5_market_features": box(-inf, inf, shape=(m5_market_size,), dtype=f32),
+            "m5_time_features": box(-inf, inf, shape=(m5_time_size,), dtype=f32),
+            "trend_features": box(-inf, inf, shape=(n_trend_features,), dtype=f32),
+            "reversion_features": box(-inf, inf, shape=(n_reversion_features,), dtype=f32),
+            "regime_features": box(-inf, inf, shape=(n_regime_features,), dtype=f32),
+            "position_state": box(-inf, inf, shape=(4,), dtype=f32),
+            "mtf_context": box(-inf, inf, shape=(n_mtf_context,), dtype=f32),
         })
 
     def reset(

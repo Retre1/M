@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from typing import TYPE_CHECKING
 
 import pandas as pd
 
-from apexfx.data.mt5_client import MT5Client
 from apexfx.utils.logging import get_logger
+
+if TYPE_CHECKING:
+    from datetime import datetime
+
+    from apexfx.data.mt5_client import MT5Client
 
 logger = get_logger(__name__)
 

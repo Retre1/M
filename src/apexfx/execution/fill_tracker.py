@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import numpy as np
 
@@ -66,7 +66,7 @@ class FillTracker:
             slippage = -slippage  # Positive slippage = worse for us
 
         record = FillRecord(
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             symbol=symbol,
             direction=direction,
             expected_price=expected_price,
@@ -113,7 +113,8 @@ class FillTracker:
         # Limit order improvement
         limit_fills = [f for f in self._fills if f.order_type == "limit"]
         if limit_fills:
-            improvements = [-f.slippage_pips for f in limit_fills]  # Negative slippage = improvement
+            # Negative slippage = improvement
+            improvements = [-f.slippage_pips for f in limit_fills]
             limit_improvement = float(np.mean(improvements))
         else:
             limit_improvement = 0.0

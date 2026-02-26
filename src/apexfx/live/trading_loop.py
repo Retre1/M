@@ -4,26 +4,29 @@ from __future__ import annotations
 
 import asyncio
 import signal
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pandas as pd
 
-from apexfx.config.schema import AppConfig, SymbolConfig
 from apexfx.data.bar_aggregator import BarAggregator
 from apexfx.data.data_store import DataStore
 from apexfx.data.mt5_client import MT5Client
+from apexfx.data.mtf_aligner import MTFDataAligner
 from apexfx.data.tick_collector import TickCollector
+from apexfx.env.mtf_obs_builder import MTFObservationBuilder
 from apexfx.execution.executor import Executor
 from apexfx.features.pipeline import FeaturePipeline
 from apexfx.live.health_check import HealthCheck
-from apexfx.data.mtf_aligner import MTFDataAligner, MTFSlice
-from apexfx.env.mtf_obs_builder import MTFObservationBuilder
 from apexfx.live.signal_generator import MTFSignalGenerator, SignalGenerator
 from apexfx.live.state_manager import StateManager
 from apexfx.risk.risk_manager import MarketState, RiskManager
 from apexfx.utils.logging import get_logger
 from apexfx.utils.math_utils import atr
+
+if TYPE_CHECKING:
+    from apexfx.config.schema import AppConfig
 
 logger = get_logger(__name__)
 
@@ -153,8 +156,8 @@ class LiveTradingLoop:
 
     def _on_new_ticks(self, ticks: pd.DataFrame) -> None:
         """Process incoming ticks through bar aggregator."""
-        bars = self._bar_aggregator.process_ticks(ticks)
-        self._health.update_tick_time(datetime.now(timezone.utc))
+        self._bar_aggregator.process_ticks(ticks)
+        self._health.update_tick_time(datetime.now(UTC))
 
     def _on_bar_finalized(self, bar) -> None:
         """Handle a finalized bar — trigger the trading pipeline."""
@@ -328,7 +331,8 @@ class LiveTradingLoop:
                     )
                 elif result.success and result.action_taken == "closed":
                     pnl = self._calculate_pnl(result.fill_price or bar.close)
-                    trade_return = pnl / self._state.state.equity if self._state.state.equity > 0 else 0.0
+                    equity = self._state.state.equity
+                    trade_return = pnl / equity if equity > 0 else 0.0
                     self._state.close_position(result.fill_price or bar.close, pnl)
                     self._risk_manager.record_trade(pnl, trade_return=trade_return)
 

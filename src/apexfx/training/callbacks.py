@@ -9,7 +9,6 @@ import numpy as np
 from stable_baselines3.common.callbacks import BaseCallback
 
 from apexfx.utils.logging import get_logger
-from apexfx.utils.metrics import compute_all_metrics
 
 logger = get_logger(__name__)
 

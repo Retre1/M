@@ -2,19 +2,21 @@
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
+from typing import TYPE_CHECKING
 
-from apexfx.config.schema import ExecutionConfig
 from apexfx.data.mt5_client import MT5Client, OrderType, TradeAction, TradeRequest
 from apexfx.utils.logging import get_logger
+
+if TYPE_CHECKING:
+    from apexfx.config.schema import ExecutionConfig
 
 logger = get_logger(__name__)
 
 
-class OrderStatus(str, Enum):
+class OrderStatus(StrEnum):
     PENDING = "pending"
     FILLED = "filled"
     PARTIALLY_FILLED = "partially_filled"
@@ -99,7 +101,7 @@ class OrderManager:
             direction=direction,
             volume=volume,
             limit_price=limit_price,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
             timeout_s=self._config.limit_timeout_s,
         )
 
@@ -154,7 +156,7 @@ class OrderManager:
             direction=direction,
             volume=volume,
             limit_price=price,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
             timeout_s=0,
         )
 
@@ -189,7 +191,7 @@ class OrderManager:
     async def monitor_pending_orders(self) -> list[ManagedOrder]:
         """Check pending orders for fills or timeouts."""
         completed: list[ManagedOrder] = []
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         for ticket, order in list(self._active_orders.items()):
             if order.status != OrderStatus.PENDING:
@@ -239,6 +241,7 @@ class OrderManager:
                 volume=0,
                 type=OrderType.BUY,
                 price=0,
+                order=ticket,
             )
             self._mt5.send_order(request)
             logger.debug("Order cancelled", ticket=ticket)

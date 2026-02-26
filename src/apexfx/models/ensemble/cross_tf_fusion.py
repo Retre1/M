@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+import torch.nn.functional as F  # noqa: N812
 
 
 class CrossTimeframeFusion(nn.Module):
@@ -81,7 +81,7 @@ class CrossTimeframeFusion(nn.Module):
         fused_state : (batch, d_model) — fused representation
         attention_weights : (batch, 3) — per-timeframe attention weights
         """
-        batch = d1_state.size(0)
+        d1_state.size(0)
 
         # Stack: (batch, 3, d_model)
         states = torch.stack([d1_state, h1_state, m5_state], dim=1)

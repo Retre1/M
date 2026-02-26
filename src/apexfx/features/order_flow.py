@@ -25,7 +25,7 @@ class OrderFlowExtractor(BaseFeatureExtractor):
         return names
 
     def extract(self, bars: pd.DataFrame, ticks: pd.DataFrame | None = None) -> pd.DataFrame:
-        n = len(bars)
+        len(bars)
         result = pd.DataFrame(index=bars.index)
 
         if ticks is not None and not ticks.empty:
@@ -93,7 +93,6 @@ class OrderFlowExtractor(BaseFeatureExtractor):
         result = pd.DataFrame(index=bars.index)
 
         close = bars["close"].values
-        open_ = bars["open"].values
         high = bars["high"].values
         low = bars["low"].values
         volume = bars["volume"].values
@@ -135,13 +134,13 @@ class OrderFlowExtractor(BaseFeatureExtractor):
             delta_window = cum_delta[i - lookback : i + 1]
 
             # Bearish divergence: price new high, delta not confirming
-            if price_window[-1] >= np.max(price_window[:-1]):
-                if delta_window[-1] < np.max(delta_window[:-1]):
-                    divergence[i] = -1
+            if (price_window[-1] >= np.max(price_window[:-1])
+                    and delta_window[-1] < np.max(delta_window[:-1])):
+                divergence[i] = -1
 
             # Bullish divergence: price new low, delta not confirming
-            if price_window[-1] <= np.min(price_window[:-1]):
-                if delta_window[-1] > np.min(delta_window[:-1]):
+            if (price_window[-1] <= np.min(price_window[:-1])
+                    and delta_window[-1] > np.min(delta_window[:-1])):
                     divergence[i] = 1
 
         return divergence

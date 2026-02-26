@@ -14,18 +14,21 @@ Changes from original:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from dataclasses import dataclass
+from datetime import UTC, date, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 
-from apexfx.config.schema import RiskConfig
 from apexfx.risk.cooldown import CooldownManager
 from apexfx.risk.drawdown_monitor import DrawdownMonitor
 from apexfx.risk.position_sizer import PositionSizer
 from apexfx.risk.var_calculator import VaRCalculator
 from apexfx.utils.logging import get_logger
+
+if TYPE_CHECKING:
+    from apexfx.config.schema import RiskConfig
 
 logger = get_logger(__name__)
 
@@ -75,7 +78,7 @@ class DailyLossGuard:
     def update(self, current_equity: float) -> bool:
         """Update with current equity. Returns True if trading is allowed."""
         self._current_equity = current_equity
-        today = datetime.now(timezone.utc).date()
+        today = datetime.now(UTC).date()
 
         if self._current_date != today:
             self._day_start_equity = current_equity
@@ -138,7 +141,7 @@ class KillSwitch:
         try:
             self.KILL_FILE.parent.mkdir(parents=True, exist_ok=True)
             self.KILL_FILE.write_text(
-                f"{datetime.now(timezone.utc).isoformat()}: {reason}\n"
+                f"{datetime.now(UTC).isoformat()}: {reason}\n"
             )
         except Exception:
             pass
@@ -232,7 +235,7 @@ class WeekendGapGuard:
             (should_block_new_trades, position_scale_factor)
         """
         if utc_now is None:
-            utc_now = datetime.now(timezone.utc)
+            utc_now = datetime.now(UTC)
 
         weekday = utc_now.weekday()  # Mon=0, Fri=4
         hour = utc_now.hour

@@ -14,6 +14,7 @@ Changes from original:
 
 from __future__ import annotations
 
+import contextlib
 from typing import Any
 
 import gymnasium as gym
@@ -236,12 +237,24 @@ class ForexTradingEnv(gym.Env):
         time_flat_size = lookback * n_time_features
 
         self.observation_space = spaces.Dict({
-            "market_features": spaces.Box(-np.inf, np.inf, shape=(market_flat_size,), dtype=np.float32),
-            "time_features": spaces.Box(-np.inf, np.inf, shape=(time_flat_size,), dtype=np.float32),
-            "trend_features": spaces.Box(-np.inf, np.inf, shape=(n_trend_features,), dtype=np.float32),
-            "reversion_features": spaces.Box(-np.inf, np.inf, shape=(n_reversion_features,), dtype=np.float32),
-            "regime_features": spaces.Box(-np.inf, np.inf, shape=(n_regime_features,), dtype=np.float32),
-            "position_state": spaces.Box(-np.inf, np.inf, shape=(4,), dtype=np.float32),
+            "market_features": spaces.Box(
+                -np.inf, np.inf, shape=(market_flat_size,), dtype=np.float32,
+            ),
+            "time_features": spaces.Box(
+                -np.inf, np.inf, shape=(time_flat_size,), dtype=np.float32,
+            ),
+            "trend_features": spaces.Box(
+                -np.inf, np.inf, shape=(n_trend_features,), dtype=np.float32,
+            ),
+            "reversion_features": spaces.Box(
+                -np.inf, np.inf, shape=(n_reversion_features,), dtype=np.float32,
+            ),
+            "regime_features": spaces.Box(
+                -np.inf, np.inf, shape=(n_regime_features,), dtype=np.float32,
+            ),
+            "position_state": spaces.Box(
+                -np.inf, np.inf, shape=(4,), dtype=np.float32,
+            ),
         })
 
         # --- Precompute historical ATR for realistic cost modeling ---
@@ -261,8 +274,6 @@ class ForexTradingEnv(gym.Env):
         self._total_trades: int = 0
         self._trade_returns: list[float] = []
         self._equity_curve: list[float] = []
-        # Pending action from previous step (for look-ahead bias fix)
-        self._pending_action: float | None = None
 
     def reset(
         self, seed: int | None = None, options: dict | None = None
@@ -418,10 +429,8 @@ class ForexTradingEnv(gym.Env):
         if self._current_idx < len(self._data):
             row = self._data.iloc[self._current_idx]
             if "time" in row.index:
-                try:
+                with contextlib.suppress(Exception):
                     hour = pd.Timestamp(row["time"]).hour
-                except Exception:
-                    pass
 
         current_atr = self._get_current_atr()
         historical_atr = self._historical_atr or current_atr

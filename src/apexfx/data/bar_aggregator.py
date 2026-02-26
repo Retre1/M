@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass
+from datetime import UTC, datetime
 
 import numpy as np
 import pandas as pd
@@ -76,7 +76,7 @@ class BarAggregator:
             if hasattr(tick_time, "to_pydatetime"):
                 tick_time = tick_time.to_pydatetime()
             if tick_time.tzinfo is None:
-                tick_time = tick_time.replace(tzinfo=timezone.utc)
+                tick_time = tick_time.replace(tzinfo=UTC)
 
             mid_price = (tick.get("bid", 0) + tick.get("ask", 0)) / 2
             if mid_price <= 0:

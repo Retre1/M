@@ -5,14 +5,17 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from apexfx.config.schema import ExecutionConfig, SymbolConfig
 from apexfx.data.mt5_client import MT5Client, OrderType, TradeAction, TradeRequest
 from apexfx.execution.fill_tracker import FillTracker
 from apexfx.execution.liquidity_guard import LiquidityGuard
 from apexfx.execution.order_manager import OrderManager
-from apexfx.risk.risk_manager import KillSwitch, MarketState, RiskDecision
 from apexfx.utils.logging import get_logger
+
+if TYPE_CHECKING:
+    from apexfx.config.schema import ExecutionConfig, SymbolConfig
+    from apexfx.risk.risk_manager import KillSwitch, RiskDecision
 
 logger = get_logger(__name__)
 
@@ -119,10 +122,7 @@ class Executor:
             )
 
         # Determine target direction
-        if abs(action) < 0.05:
-            target_direction = 0
-        else:
-            target_direction = 1 if action > 0 else -1
+        target_direction = 0 if abs(action) < 0.05 else 1 if action > 0 else -1
 
         # --- Close position if direction changes ---
         if current_direction != 0 and target_direction != current_direction:
@@ -246,7 +246,10 @@ class Executor:
         self.sync_with_mt5()
 
         if self._current_position_ticket is None:
-            return ExecutionResult(success=True, action_taken="none", message="No position to close")
+            return ExecutionResult(
+                success=True, action_taken="none",
+                message="No position to close",
+            )
 
         result = self._mt5.close_position(self._current_position_ticket)
 

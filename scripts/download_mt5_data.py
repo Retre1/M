@@ -162,7 +162,7 @@ Examples:
     print(f"  DONE: {total_bars} total bars downloaded")
     print(f"  Data stored in: {data_dir / 'raw' / 'bars'}")
     print(f"{'='*60}")
-    print(f"\nNext step — train the model:")
+    print("\nNext step — train the model:")
     print(f"  python scripts/train.py --symbol {args.symbol[0]}")
 
 

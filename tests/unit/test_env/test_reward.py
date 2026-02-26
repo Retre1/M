@@ -1,7 +1,6 @@
 """Tests for reward functions."""
 
 import numpy as np
-import pytest
 
 from apexfx.env.reward import DifferentialSharpeReward, QuantumZScoreReward, SortinoReward
 
@@ -11,7 +10,7 @@ class TestDifferentialSharpeReward:
         reward_fn = DifferentialSharpeReward()
         # Growing portfolio should produce positive reward (after initial steps)
         for i in range(20):
-            r = reward_fn.compute(100_000 + i * 100, 100_000 + (i - 1) * 100 if i > 0 else 100_000)
+            reward_fn.compute(100_000 + i * 100, 100_000 + (i - 1) * 100 if i > 0 else 100_000)
         # After building up positive returns, should be positive
         last_r = reward_fn.compute(102_100, 102_000)
         assert isinstance(last_r, float)

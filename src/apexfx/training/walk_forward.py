@@ -3,17 +3,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import numpy as np
-import pandas as pd
 
-from apexfx.config.schema import AppConfig
 from apexfx.env.forex_env import ForexTradingEnv
 from apexfx.env.reward import DifferentialSharpeReward
 from apexfx.features.pipeline import FeaturePipeline
 from apexfx.training.trainer import Trainer
 from apexfx.utils.logging import get_logger
 from apexfx.utils.metrics import compute_all_metrics
+
+if TYPE_CHECKING:
+    import pandas as pd
+
+    from apexfx.config.schema import AppConfig
 
 logger = get_logger(__name__)
 

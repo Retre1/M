@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
 
-class DeviceType(str, Enum):
+class DeviceType(StrEnum):
     AUTO = "auto"
     CUDA = "cuda"
     MPS = "mps"
@@ -115,7 +115,7 @@ class GatingConfig(BaseModel):
     n_agents: int = 3  # trend + reversion + breakout
 
 
-class RLAlgorithm(str, Enum):
+class RLAlgorithm(StrEnum):
     SAC = "SAC"
     PPO = "PPO"
 

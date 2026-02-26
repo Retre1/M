@@ -1,7 +1,6 @@
 """Tests for VaR calculator."""
 
 import numpy as np
-import pytest
 
 from apexfx.risk.var_calculator import VaRCalculator
 
@@ -34,7 +33,7 @@ class TestVaRCalculator:
         np.random.seed(42)
         for r in np.random.randn(300) * 0.01 - 0.001:
             calc.update(float(r))
-        var = calc.compute_var(100_000)
+        calc.compute_var(100_000)
         cvar = calc.compute_cvar(100_000)
         # CVaR (expected shortfall) should be >= VaR
         assert cvar >= 0

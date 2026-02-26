@@ -84,8 +84,8 @@ class ClusteringExtractor(BaseFeatureExtractor):
                 continue
 
             # Run DBSCAN
-            X = price_samples.reshape(-1, 1)
-            clustering = DBSCAN(eps=eps, min_samples=self._min_samples).fit(X)
+            samples_2d = price_samples.reshape(-1, 1)
+            clustering = DBSCAN(eps=eps, min_samples=self._min_samples).fit(samples_2d)
 
             labels = clustering.labels_
             unique_labels = set(labels) - {-1}
@@ -101,7 +101,7 @@ class ClusteringExtractor(BaseFeatureExtractor):
             cluster_sizes = []
             for label in unique_labels:
                 mask = labels == label
-                center = X[mask].mean()
+                center = samples_2d[mask].mean()
                 size = mask.sum()
                 cluster_centers.append(center)
                 cluster_sizes.append(size)

@@ -10,16 +10,17 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from pathlib import Path
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 import numpy as np
-import torch
 from stable_baselines3 import SAC
 
 from apexfx.env.obs_builder import ObservationBuilder
-from apexfx.env.mtf_obs_builder import MTFObservationBuilder
 from apexfx.utils.logging import get_logger
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = get_logger(__name__)
 
@@ -136,12 +137,17 @@ class SignalGenerator:
         gating_weights = self._hook.gating_weights
 
         # Determine regime from observation
+        # regime_features: [hurst, realized_vol, trend_strength,
+        #                   regime_trending, regime_mean_reverting, regime_flat]
         regime = "flat"
         regime_features = observation.get("regime_features", np.zeros(6))
+        realized_vol = regime_features[1]
         if regime_features[3] > 0.5:
             regime = "trending"
         elif regime_features[4] > 0.5:
             regime = "mean_reverting"
+        elif realized_vol > 2.0:
+            regime = "volatile"
 
         signal = TradingSignal(
             action=action_value,
@@ -151,7 +157,7 @@ class SignalGenerator:
             breakout_agent_action=breakout_action,
             gating_weights=gating_weights,
             regime=regime,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             inference_time_ms=inference_ms,
             variable_importance=self._hook.variable_importance,
         )
@@ -264,10 +270,13 @@ class MTFSignalGenerator:
         # Determine regime
         regime = "flat"
         regime_features = observation.get("regime_features", np.zeros(6))
+        realized_vol = regime_features[1]
         if regime_features[3] > 0.5:
             regime = "trending"
         elif regime_features[4] > 0.5:
             regime = "mean_reverting"
+        elif realized_vol > 2.0:
+            regime = "volatile"
 
         signal = MTFTradingSignal(
             action=action_value,
@@ -278,7 +287,7 @@ class MTFSignalGenerator:
             gating_weights=self._hook.gating_weights,
             tf_attention_weights=self._hook.tf_attention_weights,
             regime=regime,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             inference_time_ms=inference_ms,
             variable_importance=self._hook.variable_importance,
         )
