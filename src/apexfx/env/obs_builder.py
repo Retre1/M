@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
-import pandas as pd
 
 from apexfx.utils.time_utils import encode_time_features, get_session_id
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 
 class ObservationBuilder:

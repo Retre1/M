@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pandas as pd
 
-from apexfx.features import BaseFeatureExtractor
 from apexfx.features.clustering import ClusteringExtractor
 from apexfx.features.hurst import HurstExtractor
 from apexfx.features.intermarket_corr import IntermarketCorrExtractor
@@ -14,6 +15,9 @@ from apexfx.features.regime import RegimeExtractor
 from apexfx.features.spectral import SpectralExtractor
 from apexfx.features.volume_profile import VolumeProfileExtractor
 from apexfx.utils.logging import get_logger
+
+if TYPE_CHECKING:
+    from apexfx.features import BaseFeatureExtractor
 
 logger = get_logger(__name__)
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from apexfx.config.registry import init_config
 from apexfx.data.data_store import DataStore
@@ -33,7 +33,7 @@ def main() -> None:
         mt5.connect()
         logger.info("Starting data collection", symbol=args.symbol, days=args.days)
 
-        from_dt = datetime.now(timezone.utc) - timedelta(days=args.days)
+        from_dt = datetime.now(UTC) - timedelta(days=args.days)
 
         for tf in args.timeframes:
             logger.info("Collecting bars", timeframe=tf)

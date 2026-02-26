@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from apexfx.utils.logging import get_logger
 
@@ -80,7 +80,7 @@ class DrawdownMonitor:
         self._max_dd_ever = max(self._max_dd_ever, dd)
 
         # Record history periodically
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         self._drawdown_history.append((now, dd))
         if len(self._drawdown_history) > 10_000:
             self._drawdown_history = self._drawdown_history[-5_000:]

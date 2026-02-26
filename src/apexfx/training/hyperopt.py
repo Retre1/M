@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import optuna
-import pandas as pd
 
-from apexfx.config.schema import AppConfig
 from apexfx.training.walk_forward import WalkForwardValidator
 from apexfx.utils.logging import get_logger
+
+if TYPE_CHECKING:
+    import pandas as pd
+
+    from apexfx.config.schema import AppConfig
 
 logger = get_logger(__name__)
 
@@ -103,8 +106,8 @@ class HyperoptManager:
         config.model.tft.dropout = trial.suggest_float("dropout", 0.05, 0.3)
 
         # Reward function
-        lambda_dd = trial.suggest_float("lambda_dd", 0.5, 5.0)
-        eta = trial.suggest_float("reward_eta", 0.005, 0.05, log=True)
+        trial.suggest_float("lambda_dd", 0.5, 5.0)
+        trial.suggest_float("reward_eta", 0.005, 0.05, log=True)
 
         # Risk parameters
         config.risk.daily_var_limit = trial.suggest_float("var_limit", 0.01, 0.05)

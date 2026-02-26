@@ -13,17 +13,16 @@ tft:
     - dow_cos
     - session_id
 
-agents:
-  trend:
-    hidden_sizes: [128, 128, 64]
-    activation: relu
-    dropout: 0.1
+trend_agent:
+  hidden_sizes: [128, 128, 64]
+  activation: relu
+  dropout: 0.1
 
-  reversion:
-    hidden_sizes: [128, 128, 64]
-    activation: relu
-    dropout: 0.1
-    z_score_threshold: 3.0
+reversion_agent:
+  hidden_sizes: [128, 128, 64]
+  activation: relu
+  dropout: 0.1
+  z_score_threshold: 3.0
 
 gating:
   hidden_sizes: [64, 32]

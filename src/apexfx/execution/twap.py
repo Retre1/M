@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from apexfx.utils.logging import get_logger
 
@@ -96,7 +96,7 @@ class TWAPExecutor:
         n = max(2, min(self._n_slices, int(volume / 0.1)))  # At least 0.1 lots per slice
         slice_volume = volume / n
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         slices = []
         for i in range(n):
             scheduled = now + timedelta(seconds=self._interval * i)

@@ -29,7 +29,7 @@ class BaseRewardFunction(ABC):
 
 class DifferentialSharpeReward(BaseRewardFunction):
     """
-    R_t = ΔPortfolio_t / σ_rolling − λ · Drawdown_t
+    r_t = ΔPortfolio_t / σ_rolling − λ · Drawdown_t
 
     Implements the Differential Sharpe Ratio (Moody & Saffell, 1998).
     """
@@ -60,16 +60,16 @@ class DifferentialSharpeReward(BaseRewardFunction):
             return 0.0
 
         self._step += 1
-        R_t = (portfolio_value - prev_portfolio_value) / prev_portfolio_value
+        r_t = (portfolio_value - prev_portfolio_value) / prev_portfolio_value
 
-        delta_A = R_t - self._A
-        delta_B = R_t**2 - self._B
-        self._A += self.eta * delta_A
-        self._B += self.eta * delta_B
+        delta_a = r_t - self._A
+        delta_b = r_t**2 - self._B
+        self._A += self.eta * delta_a
+        self._B += self.eta * delta_b
 
         sigma_sq = self._B - self._A**2
         if sigma_sq > 1e-10:
-            dsr = (delta_A * self._B - 0.5 * self._A * delta_B) / (sigma_sq**1.5 + 1e-10)
+            dsr = (delta_a * self._B - 0.5 * self._A * delta_b) / (sigma_sq**1.5 + 1e-10)
         else:
             dsr = 0.0
 
@@ -104,8 +104,8 @@ class SortinoReward(BaseRewardFunction):
         if prev_portfolio_value <= 0:
             return 0.0
 
-        R_t = (portfolio_value - prev_portfolio_value) / prev_portfolio_value
-        self._returns.append(R_t)
+        r_t = (portfolio_value - prev_portfolio_value) / prev_portfolio_value
+        self._returns.append(r_t)
 
         if len(self._returns) > self.window:
             self._returns = self._returns[-self.window :]
@@ -168,16 +168,16 @@ class CalmarWeightedReward(BaseRewardFunction):
             return 0.0
 
         self._step += 1
-        R_t = (portfolio_value - prev_portfolio_value) / prev_portfolio_value
+        r_t = (portfolio_value - prev_portfolio_value) / prev_portfolio_value
 
-        delta_A = R_t - self._A
-        delta_B = R_t**2 - self._B
-        self._A += self.eta * delta_A
-        self._B += self.eta * delta_B
+        delta_a = r_t - self._A
+        delta_b = r_t**2 - self._B
+        self._A += self.eta * delta_a
+        self._B += self.eta * delta_b
 
         sigma_sq = self._B - self._A**2
         if sigma_sq > 1e-10:
-            dsr = (delta_A * self._B - 0.5 * self._A * delta_B) / (sigma_sq**1.5 + 1e-10)
+            dsr = (delta_a * self._B - 0.5 * self._A * delta_b) / (sigma_sq**1.5 + 1e-10)
         else:
             dsr = 0.0
 
@@ -334,8 +334,9 @@ class HoldAwareReward(BaseRewardFunction):
         churn_penalty = 0.0
         was_in_position = self._prev_position_direction != 0
         now_flat = self._position_direction == 0
-        if was_in_position and now_flat:
-            if self._prev_unrealized_pnl > 0 and self._time_in_position < self.min_hold_bars:
+        if (was_in_position and now_flat
+                and self._prev_unrealized_pnl > 0
+                and self._time_in_position < self.min_hold_bars):
                 churn_penalty = self.churn_penalty
 
         # Z-Score bonus (same as QuantumZScoreReward)

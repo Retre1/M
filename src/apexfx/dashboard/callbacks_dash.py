@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import dash
-import dash_bootstrap_components as dbc
 import numpy as np
 import plotly.graph_objects as go
 from dash import html
@@ -45,7 +44,7 @@ def register_callbacks(app: dash.Dash, state_file: str) -> None:
             return ["$0", "$0", "0%", "0%", empty_fig, "", "", ""]
 
         equity = state.get("equity", 100_000)
-        balance = state.get("balance", 100_000)
+        state.get("balance", 100_000)
         total_pnl = state.get("total_pnl", 0)
         max_dd = state.get("max_drawdown", 0)
         total_trades = state.get("total_trades", 0)

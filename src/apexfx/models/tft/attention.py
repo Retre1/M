@@ -6,7 +6,7 @@ import math
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+import torch.nn.functional as F  # noqa: N812
 
 
 class InterpretableMultiHeadAttention(nn.Module):
@@ -66,12 +66,12 @@ class InterpretableMultiHeadAttention(nn.Module):
         batch = query.size(0)
 
         # Linear projections and reshape for multi-head
-        Q = self._split_heads(self.W_q(query))  # (batch, n_heads, seq_q, d_k)
-        K = self._split_heads(self.W_k(key))    # (batch, n_heads, seq_k, d_k)
-        V = self._split_heads(self.W_v(value))  # (batch, n_heads, seq_k, d_k)
+        q = self._split_heads(self.W_q(query))  # (batch, n_heads, seq_q, d_k)
+        k = self._split_heads(self.W_k(key))    # (batch, n_heads, seq_k, d_k)
+        v = self._split_heads(self.W_v(value))  # (batch, n_heads, seq_k, d_k)
 
         # Scaled dot-product attention
-        scores = torch.matmul(Q, K.transpose(-2, -1)) / self.scale
+        scores = torch.matmul(q, k.transpose(-2, -1)) / self.scale
         # scores: (batch, n_heads, seq_q, seq_k)
 
         if mask is not None:
@@ -89,7 +89,7 @@ class InterpretableMultiHeadAttention(nn.Module):
         attn_weights = attn_weights_per_head.mean(dim=1)  # (batch, seq_q, seq_k)
 
         # Weighted sum of values per head
-        head_outputs = torch.matmul(attn_weights_per_head, V)  # (batch, n_heads, seq_q, d_k)
+        head_outputs = torch.matmul(attn_weights_per_head, v)  # (batch, n_heads, seq_q, d_k)
 
         # Combine heads via interpretable weight-sharing
         # head_outputs: (batch, n_heads, seq_q, d_k) → (batch, seq_q, n_heads, d_k)

@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
 
-from apexfx.data.data_store import DataStore
-from apexfx.data.mt5_client import MT5Client
 from apexfx.utils.logging import get_logger
+
+if TYPE_CHECKING:
+    from apexfx.data.data_store import DataStore
+    from apexfx.data.mt5_client import MT5Client
 
 logger = get_logger(__name__)
 
@@ -112,7 +115,7 @@ class TickCollector:
     async def _poll_ticks(self) -> None:
         """Poll MT5 for new ticks."""
         try:
-            from_dt = self._last_tick_time or datetime.now(timezone.utc)
+            from_dt = self._last_tick_time or datetime.now(UTC)
             ticks_df = self._mt5.get_ticks(self._symbol, from_dt, count=1000)
 
             if ticks_df.empty:

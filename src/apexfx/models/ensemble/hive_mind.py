@@ -13,8 +13,8 @@ Also supports Multi-Timeframe (MTF) mode with shared TFT + CrossTimeframeFusion.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-import gymnasium as gym
 import torch
 import torch.nn as nn
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
@@ -25,6 +25,9 @@ from apexfx.models.agents.trend_agent import TrendAgent
 from apexfx.models.ensemble.cross_tf_fusion import CrossTimeframeFusion
 from apexfx.models.ensemble.gating_network import GatingNetwork
 from apexfx.models.tft.tft_model import TemporalFusionTransformer
+
+if TYPE_CHECKING:
+    import gymnasium as gym
 
 
 @dataclass
@@ -457,7 +460,8 @@ class MTFHiveMindExtractor(BaseFeaturesExtractor):
         d_regime_features: int = 6,
         n_mtf_context: int = 6,
     ) -> None:
-        # features_dim = fused_state + 3 agent_actions + 3 gating + 3 tf_attn + 4 position + 6 mtf_context
+        # features_dim = fused_state + 3 agent_actions + 3 gating
+        # + 3 tf_attn + 4 position + 6 mtf_context
         features_dim = d_model + 3 + 3 + 3 + 4 + n_mtf_context
         super().__init__(observation_space, features_dim=features_dim)
 

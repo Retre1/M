@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
-import pandas as pd
 import torch
-from stable_baselines3 import SAC, PPO
+from stable_baselines3 import PPO, SAC
 from stable_baselines3.common.callbacks import CallbackList
 from stable_baselines3.common.vec_env import DummyVecEnv
 
@@ -16,7 +16,7 @@ from apexfx.config.schema import AppConfig, RLAlgorithm
 from apexfx.data.mtf_synthetic import resample_real_data
 from apexfx.env.forex_env import ForexTradingEnv
 from apexfx.env.mtf_forex_env import MTFForexTradingEnv
-from apexfx.env.reward import CalmarWeightedReward, DifferentialSharpeReward
+from apexfx.env.reward import CalmarWeightedReward
 from apexfx.env.wrappers import MonitorWrapper, NormalizeReward
 from apexfx.features.pipeline import FeaturePipeline
 from apexfx.models.ensemble.hive_mind import HiveMindExtractor, MTFHiveMindExtractor
@@ -28,6 +28,9 @@ from apexfx.training.callbacks import (
 from apexfx.training.curriculum import CurriculumManager, MTFStageData
 from apexfx.utils.logging import get_logger
 from apexfx.utils.metrics import compute_all_metrics
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 logger = get_logger(__name__)
 
@@ -172,7 +175,6 @@ class Trainer:
 
     def _build_env(self, data: pd.DataFrame, n_features: int) -> DummyVecEnv:
         """Create wrapped Gymnasium environment."""
-        rl_cfg = self._config.model.rl
         risk_cfg = self._config.risk
 
         def make_env():
@@ -435,7 +437,10 @@ class Trainer:
                 if abs(position) > 0 and abs(prev_position) == 0:
                     trades.append({"step": step_count, "type": "open", "position": float(position)})
                 elif abs(position) == 0 and abs(prev_position) > 0:
-                    trades.append({"step": step_count, "type": "close", "pnl": float(current_value - prev_value)})
+                    trades.append({
+                        "step": step_count, "type": "close",
+                        "pnl": float(current_value - prev_value),
+                    })
 
                 equity.append(current_value)
                 prev_value = current_value
@@ -462,7 +467,7 @@ class Trainer:
             logger.info("BACKTEST RESULTS (Out-of-Sample: last 30%)")
             logger.info("=" * 60)
             logger.info(f"  Test period:        {len(test_data)} bars")
-            logger.info(f"  Initial balance:    $100,000.00")
+            logger.info("  Initial balance:    $100,000.00")
             logger.info(f"  Final balance:      ${final_value:,.2f}")
             logger.info(f"  Total return:       {total_return_pct:+.2f}%")
             logger.info(f"  Max drawdown:       {max_dd_pct:.2f}%")

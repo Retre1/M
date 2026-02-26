@@ -7,7 +7,7 @@ and unpredictable moves. Trading through these events is essentially gambling.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from apexfx.utils.logging import get_logger
 
@@ -78,7 +78,7 @@ class NewsFilter:
 
     def clear_old_events(self, before: datetime | None = None) -> None:
         """Remove events that have already passed."""
-        cutoff = before or datetime.now(timezone.utc)
+        cutoff = before or datetime.now(UTC)
         self._events = [
             e for e in self._events
             if e.time_utc + self._blackout_after > cutoff
@@ -100,7 +100,7 @@ class NewsFilter:
             (can_trade, position_scale, reason)
         """
         if utc_now is None:
-            utc_now = datetime.now(timezone.utc)
+            utc_now = datetime.now(UTC)
 
         for event in self._events:
             # Filter by currency if specified
@@ -139,7 +139,7 @@ class NewsFilter:
     @property
     def upcoming_events(self) -> list[NewsEvent]:
         """Get upcoming events sorted by time."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         return [e for e in self._events if e.time_utc > now]
 
     @property

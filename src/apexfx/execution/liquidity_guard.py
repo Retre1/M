@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
-from apexfx.config.schema import ExecutionConfig, SymbolConfig
-from apexfx.data.mt5_client import MT5Client
 from apexfx.utils.logging import get_logger
-from apexfx.utils.time_utils import ForexSession, get_active_sessions, is_forex_market_open
+from apexfx.utils.time_utils import get_active_sessions, is_forex_market_open
+
+if TYPE_CHECKING:
+    from apexfx.config.schema import ExecutionConfig, SymbolConfig
+    from apexfx.data.mt5_client import MT5Client
 
 logger = get_logger(__name__)
 
@@ -52,14 +55,18 @@ class LiquidityGuard:
 
     def check(self, symbol: str) -> LiquidityStatus:
         """Perform all liquidity checks for a symbol."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
+        spread_limit_price = (
+            self._symbol_config.spread_limit_pips
+            * self._symbol_config.pip_value
+        )
 
         # Check 1: Market open
         if not is_forex_market_open(now):
             return LiquidityStatus(
                 tradeable=False,
                 current_spread=0,
-                spread_limit=self._symbol_config.spread_limit_pips * self._symbol_config.pip_value,
+                spread_limit=spread_limit_price,
                 session_active=False,
                 market_open=False,
                 reason="Forex market closed",
@@ -77,7 +84,7 @@ class LiquidityGuard:
                 return LiquidityStatus(
                     tradeable=False,
                     current_spread=0,
-                    spread_limit=self._symbol_config.spread_limit_pips * self._symbol_config.pip_value,
+                    spread_limit=spread_limit_price,
                     session_active=False,
                     market_open=True,
                     reason=f"Outside allowed sessions: {[s.value for s in active_sessions]}",
@@ -90,14 +97,13 @@ class LiquidityGuard:
                     return LiquidityStatus(
                         tradeable=False,
                         current_spread=0,
-                        spread_limit=self._symbol_config.spread_limit_pips * self._symbol_config.pip_value,
+                        spread_limit=spread_limit_price,
                         session_active=session_active,
                         market_open=True,
                         reason="News blackout active",
                     )
 
         # Check 4: Spread
-        spread_limit_price = self._symbol_config.spread_limit_pips * self._symbol_config.pip_value
         current_spread = 0.0
 
         if self._mt5 is not None:
@@ -123,8 +129,12 @@ class LiquidityGuard:
                 spread_limit=spread_limit_price,
                 session_active=session_active,
                 market_open=True,
-                reason=f"Spread too wide: {current_spread / self._symbol_config.pip_value:.1f} pips "
-                       f"(limit: {self._symbol_config.spread_limit_pips} pips)",
+                reason=(
+                    f"Spread too wide: "
+                    f"{current_spread / self._symbol_config.pip_value:.1f} "
+                    f"pips (limit: "
+                    f"{self._symbol_config.spread_limit_pips} pips)"
+                ),
             )
 
         return LiquidityStatus(

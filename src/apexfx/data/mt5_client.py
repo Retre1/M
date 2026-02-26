@@ -8,7 +8,6 @@ from datetime import datetime
 from enum import IntEnum
 from typing import Any
 
-import numpy as np
 import pandas as pd
 
 from apexfx.utils.logging import get_logger
@@ -73,6 +72,7 @@ class TradeRequest:
     magic: int = 234000
     comment: str = "ApexFX"
     type_filling: int = 2  # IOC
+    order: int = 0  # ticket for REMOVE actions
 
 
 @dataclass
@@ -123,7 +123,7 @@ class MT5Client:
     def connect(self) -> None:
         """Initialize and connect to MT5 terminal."""
         try:
-            import MetaTrader5 as mt5
+            import MetaTrader5 as mt5  # noqa: N813
             self._mt5 = mt5
         except ImportError:
             logger.warning("MetaTrader5 package not available. Using mock mode.")
@@ -283,10 +283,7 @@ class MT5Client:
     def get_positions(self, symbol: str | None = None) -> list[Position]:
         """Get open positions."""
         self._ensure_connected()
-        if symbol:
-            positions = self._mt5.positions_get(symbol=symbol)
-        else:
-            positions = self._mt5.positions_get()
+        positions = self._mt5.positions_get(symbol=symbol) if symbol else self._mt5.positions_get()
 
         if positions is None:
             return []
@@ -312,7 +309,10 @@ class MT5Client:
         self._ensure_connected()
         positions = self._mt5.positions_get(ticket=ticket)
         if not positions:
-            return TradeResult(retcode=-1, deal=0, order=0, volume=0, price=0, comment="Position not found")
+            return TradeResult(
+                retcode=-1, deal=0, order=0, volume=0, price=0,
+                comment="Position not found",
+            )
 
         pos = positions[0]
         close_type = OrderType.SELL if pos.type == 0 else OrderType.BUY

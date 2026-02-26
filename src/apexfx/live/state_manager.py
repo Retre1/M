@@ -5,10 +5,8 @@ from __future__ import annotations
 import json
 import threading
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-
-import numpy as np
 
 from apexfx.utils.logging import get_logger
 
@@ -90,7 +88,7 @@ class StateManager:
             if len(self._state.equity_curve) > 100_000:
                 self._state.equity_curve = self._state.equity_curve[-50_000:]
 
-            self._state.last_update = datetime.now(timezone.utc).isoformat()
+            self._state.last_update = datetime.now(UTC).isoformat()
 
     def open_position(
         self,
@@ -105,7 +103,7 @@ class StateManager:
             self._state.current_position_direction = direction
             self._state.current_position_volume = volume
             self._state.current_position_entry_price = entry_price
-            self._state.current_position_entry_time = datetime.now(timezone.utc).isoformat()
+            self._state.current_position_entry_time = datetime.now(UTC).isoformat()
             self._state.time_in_position = 0
 
             logger.info(
@@ -126,7 +124,7 @@ class StateManager:
 
             record = TradeRecord(
                 entry_time=self._state.current_position_entry_time,
-                exit_time=datetime.now(timezone.utc).isoformat(),
+                exit_time=datetime.now(UTC).isoformat(),
                 symbol=self._state.current_position_symbol,
                 direction="LONG" if self._state.current_position_direction > 0 else "SHORT",
                 volume=self._state.current_position_volume,
