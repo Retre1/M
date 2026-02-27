@@ -33,12 +33,13 @@ rl:
   gamma: 0.99
   learning_rate: 0.0003
   buffer_size: 100000
-  batch_size: 256
+  batch_size: 4096
   ent_coef: auto
   tau: 0.005
-  train_freq: 4
-  gradient_steps: 4
+  train_freq: 8
+  gradient_steps: 1
   learning_starts: 5000
+  n_envs: 4
 
 # Multi-Timeframe settings
 mtf:

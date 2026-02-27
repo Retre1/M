@@ -10,7 +10,7 @@ import numpy as np
 import torch
 from stable_baselines3 import PPO, SAC
 from stable_baselines3.common.callbacks import CallbackList
-from stable_baselines3.common.vec_env import DummyVecEnv
+from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecEnv
 
 from apexfx.config.schema import AppConfig, RLAlgorithm
 from apexfx.data.mtf_synthetic import resample_real_data
@@ -173,9 +173,10 @@ class Trainer:
             progress_bar=True,
         )
 
-    def _build_env(self, data: pd.DataFrame, n_features: int) -> DummyVecEnv:
+    def _build_env(self, data: pd.DataFrame, n_features: int) -> VecEnv:
         """Create wrapped Gymnasium environment."""
         risk_cfg = self._config.risk
+        n_envs = self._config.model.rl.n_envs
 
         def make_env():
             env = ForexTradingEnv(
@@ -191,9 +192,12 @@ class Trainer:
             env = NormalizeReward(env)
             return env
 
+        if n_envs > 1:
+            logger.info("Using SubprocVecEnv", n_envs=n_envs)
+            return SubprocVecEnv([make_env for _ in range(n_envs)])
         return DummyVecEnv([make_env])
 
-    def _build_model(self, env: DummyVecEnv, n_features: int) -> SAC | PPO:
+    def _build_model(self, env: VecEnv, n_features: int) -> SAC | PPO:
         """Create SB3 model with HiveMind feature extractor."""
         rl_cfg = self._config.model.rl
         lookback = self._config.data.feature_window
@@ -254,10 +258,11 @@ class Trainer:
         h1_data: pd.DataFrame,
         m5_data: pd.DataFrame,
         n_features: int,
-    ) -> DummyVecEnv:
+    ) -> VecEnv:
         """Create MTF Gymnasium environment."""
         risk_cfg = self._config.risk
         mtf_cfg = self._config.model.mtf
+        n_envs = self._config.model.rl.n_envs
 
         def make_env():
             env = MTFForexTradingEnv(
@@ -277,9 +282,12 @@ class Trainer:
             env = NormalizeReward(env)
             return env
 
+        if n_envs > 1:
+            logger.info("Using SubprocVecEnv for MTF", n_envs=n_envs)
+            return SubprocVecEnv([make_env for _ in range(n_envs)])
         return DummyVecEnv([make_env])
 
-    def _build_mtf_model(self, env: DummyVecEnv, n_features: int) -> SAC | PPO:
+    def _build_mtf_model(self, env: VecEnv, n_features: int) -> SAC | PPO:
         """Create SB3 model with MTFHiveMindExtractor."""
         rl_cfg = self._config.model.rl
         mtf_cfg = self._config.model.mtf

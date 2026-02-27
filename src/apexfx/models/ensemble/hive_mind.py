@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F  # noqa: N812
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 
 from apexfx.models.agents.breakout_agent import BreakoutAgent
@@ -347,36 +348,60 @@ class MTFHiveMind(nn.Module):
             n_agents=3,
         )
 
-    def _run_tft(
+    def _run_tft_batched(
         self,
-        market_features: torch.Tensor,
-        time_features: torch.Tensor,
-        tf_idx: int,
-    ):
-        """Run shared TFT for one timeframe.
+        d1_market: torch.Tensor,
+        d1_time: torch.Tensor,
+        h1_market: torch.Tensor,
+        h1_time: torch.Tensor,
+        m5_market: torch.Tensor,
+        m5_time: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Run shared TFT for all 3 timeframes in a single batched call.
 
-        Parameters
-        ----------
-        market_features : (batch, seq, n_continuous_vars)
-        time_features : (batch, seq, n_known_future_vars)
-        tf_idx : int — timeframe index (0=D1, 1=H1, 2=M5)
+        Left-pads shorter sequences (D1) to match the longest (H1/M5),
+        then concatenates along batch dim for one TFT forward pass.
 
         Returns
         -------
-        TFTOutput
+        d1_state, h1_state, m5_state : (batch, d_model) each
+        h1_attn_weights, h1_var_importance : for interpretability
         """
-        batch = market_features.size(0)
-        device = market_features.device
+        batch = h1_market.size(0)
+        device = h1_market.device
 
-        # Timeframe embedding as static variable
-        tf_id = torch.full((batch,), tf_idx, dtype=torch.long, device=device)
-        tf_static = self.tf_embedding(tf_id)  # (batch, 1)
+        # Find max sequence length across timeframes
+        max_seq = max(d1_market.size(1), h1_market.size(1), m5_market.size(1))
 
-        return self.tft(
-            x_past=market_features,
-            x_future=time_features,
-            x_static=tf_static,
-        )
+        # Left-pad D1 if shorter (e.g. 5 → 20)
+        d1_pad = max_seq - d1_market.size(1)
+        if d1_pad > 0:
+            d1_market = F.pad(d1_market, (0, 0, d1_pad, 0))  # pad seq dim left
+            d1_time = F.pad(d1_time, (0, 0, d1_pad, 0))
+
+        # Stack all 3 TFs along batch dim: (batch*3, max_seq, n_vars)
+        all_market = torch.cat([d1_market, h1_market, m5_market], dim=0)
+        all_time = torch.cat([d1_time, h1_time, m5_time], dim=0)
+
+        # Timeframe embeddings: [0,0,..,1,1,..,2,2,..]
+        tf_ids = torch.cat([
+            torch.zeros(batch, dtype=torch.long, device=device),
+            torch.ones(batch, dtype=torch.long, device=device),
+            torch.full((batch,), 2, dtype=torch.long, device=device),
+        ])
+        tf_static = self.tf_embedding(tf_ids)  # (batch*3, 1)
+
+        # Single TFT forward pass for all 3 timeframes
+        all_out = self.tft(x_past=all_market, x_future=all_time, x_static=tf_static)
+
+        # Split encoded states back: each (batch, d_model)
+        d1_state, h1_state, m5_state = all_out.encoded_state.split(batch, dim=0)
+
+        # Use H1 attention/importance for interpretability (middle TF)
+        h1_attn = all_out.attention_weights[batch : 2 * batch]
+        h1_var_imp = all_out.variable_importance[batch : 2 * batch]
+
+        return d1_state, h1_state, m5_state, h1_attn, h1_var_imp
 
     def forward(
         self,
@@ -392,20 +417,17 @@ class MTFHiveMind(nn.Module):
         mtf_context: torch.Tensor | None = None,
         breakout_features: torch.Tensor | None = None,
     ) -> MTFHiveMindOutput:
-        """Full MTF forward pass."""
+        """Full MTF forward pass with batched TFT."""
         batch = h1_market.size(0)
 
-        # Run shared TFT for each timeframe
-        d1_out = self._run_tft(d1_market, d1_time, tf_idx=0)
-        h1_out = self._run_tft(h1_market, h1_time, tf_idx=1)
-        m5_out = self._run_tft(m5_market, m5_time, tf_idx=2)
+        # Batched TFT: 1 call instead of 3
+        d1_state, h1_state, m5_state, h1_attn, h1_var_imp = self._run_tft_batched(
+            d1_market, d1_time, h1_market, h1_time, m5_market, m5_time,
+        )
 
         # Cross-Timeframe Fusion
         fused_state, tf_attn_weights = self.fusion(
-            d1_out.encoded_state,
-            h1_out.encoded_state,
-            m5_out.encoded_state,
-            mtf_context=mtf_context,
+            d1_state, h1_state, m5_state, mtf_context=mtf_context,
         )
 
         # Agent outputs (using fused state)
@@ -432,8 +454,8 @@ class MTFHiveMind(nn.Module):
             breakout_action=breakout_action,
             gating_weights=gating_weights,
             tf_attention_weights=tf_attn_weights,
-            tft_attention=h1_out.attention_weights,
-            variable_importance=h1_out.variable_importance,
+            tft_attention=h1_attn,
+            variable_importance=h1_var_imp,
             encoded_state=fused_state,
         )
 

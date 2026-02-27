@@ -131,6 +131,7 @@ class RLConfig(BaseModel):
     train_freq: int = 1
     gradient_steps: int = 1
     learning_starts: int = 10_000
+    n_envs: int = 1
 
 
 class MTFLookbackConfig(BaseModel):
