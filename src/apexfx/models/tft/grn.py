@@ -72,7 +72,12 @@ class GatedResidualNetwork(nn.Module):
 
         # Context modulation
         if self.context_proj is not None and context is not None:
-            hidden = hidden + self.context_proj(context)
+            ctx = self.context_proj(context)
+            # When x is 3D (batch, seq, d) but context is 2D (batch, d_context),
+            # the projection result needs unsqueeze to broadcast over time dim.
+            if ctx.dim() < hidden.dim():
+                ctx = ctx.unsqueeze(-2)
+            hidden = hidden + ctx
 
         hidden = self.elu(hidden)
         hidden = self.fc2(hidden)
