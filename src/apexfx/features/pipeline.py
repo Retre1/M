@@ -48,6 +48,21 @@ class FeaturePipeline:
             ClusteringExtractor(window=200),
         ]
 
+    @classmethod
+    def create_fast(cls) -> FeaturePipeline:
+        """Create a lightweight pipeline with only fast vectorized extractors.
+
+        Suitable for high-frequency timeframes (M5) where running the full
+        pipeline over hundreds of thousands of bars would be too slow.
+        """
+        return cls(
+            extractors=[
+                OrderFlowExtractor(),
+                RegimeExtractor(),
+            ],
+            normalize=True,
+        )
+
     @property
     def feature_names(self) -> list[str]:
         if not self._feature_names:

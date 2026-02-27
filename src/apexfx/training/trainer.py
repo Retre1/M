@@ -137,7 +137,11 @@ class Trainer:
 
     def _train_mtf_stage(self, stage_data: MTFStageData) -> None:
         """Train a multi-timeframe stage."""
-        # Compute features for each timeframe
+        # Compute features for each timeframe.
+        # D1 + H1: full pipeline (few thousand bars — fast enough).
+        # M5: lightweight pipeline (hundreds of thousands of bars;
+        #      the full pipeline's Python-loop extractors would take
+        #      an hour+).
         logger.info("Computing MTF features (D1, H1, M5)")
 
         d1_features = self._feature_pipeline.compute(stage_data.d1_data)
@@ -146,7 +150,8 @@ class Trainer:
         h1_features = self._feature_pipeline.compute(stage_data.h1_data)
         logger.info("H1 features ready", n_bars=len(h1_features))
 
-        m5_features = self._feature_pipeline.compute(stage_data.m5_data)
+        m5_pipeline = FeaturePipeline.create_fast()
+        m5_features = m5_pipeline.compute(stage_data.m5_data)
         logger.info("M5 features ready", n_bars=len(m5_features))
 
         n_features = min(self._feature_pipeline.n_features, 30)
@@ -394,7 +399,7 @@ class Trainer:
             if self._mtf_enabled:
                 d1_test, m5_test = resample_real_data(test_data)
                 d1_features = self._feature_pipeline.compute(d1_test)
-                m5_features = self._feature_pipeline.compute(m5_test)
+                m5_features = FeaturePipeline.create_fast().compute(m5_test)
                 mtf_cfg = self._config.model.mtf
 
                 eval_env = MTFForexTradingEnv(
