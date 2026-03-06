@@ -214,9 +214,16 @@ class WalkForwardValidator:
         feature_pipeline = FeaturePipeline()
         features = feature_pipeline.compute(test_data)
 
+        # Apply feature selection if trainer has a fitted selector
+        n_market_features = feature_pipeline.n_features
+        if hasattr(trainer, '_feature_selector') and trainer._feature_selector._is_fitted:
+            features = trainer._feature_selector.transform(features)
+            n_market_features = len(trainer._feature_selector.selected_features)
+
         env = ForexTradingEnv(
             data=features,
             initial_balance=100_000.0,
+            n_market_features=n_market_features,
             reward_fn=DifferentialSharpeReward(),
             max_drawdown_pct=1.0,  # Don't terminate during evaluation
         )

@@ -1,11 +1,25 @@
+# ============================================================================
+# ApexFX Model Configuration — Optimised for 2× RTX 4090 (96GB VRAM)
+#
+# Scaled up from prototype (d_model=32, batch=256) to production:
+#   - d_model: 32 → 128 (16× more capacity in TFT encoder)
+#   - batch_size: 256 → 2048 (8× better GPU utilisation)
+#   - buffer_size: 100K → 2M (20× more training data diversity)
+#   - net_arch: [256,256] → [512,512,256] (deeper actor/critic)
+#   - Agent hidden: [128,128,64] → [512,256,128] (4× wider agents)
+#
+# Estimated VRAM usage: ~8-12 GB per GPU (well within 48GB each)
+# Estimated total params: ~5-8M (vs 500K before)
+# ============================================================================
+
 tft:
-  d_model: 32
-  n_heads: 4
-  n_encoder_layers: 1
+  d_model: 128                # 32→128: 16× more representational capacity
+  n_heads: 8                  # 4→8: richer attention patterns
+  n_encoder_layers: 2         # 1→2: deeper temporal encoding
   n_decoder_layers: 1
   dropout: 0.1
-  hidden_continuous_size: 16
-  attention_head_size: 16
+  hidden_continuous_size: 64  # 16→64: richer per-variable embeddings
+  attention_head_size: 32     # 16→32: matches d_model/n_heads
   known_future_inputs:
     - hour_sin
     - hour_cos
@@ -15,39 +29,58 @@ tft:
 
 agents:
   trend:
-    hidden_sizes: [128, 128, 64]
+    hidden_sizes: [512, 256, 128]   # 4× wider: catches subtler trends
     activation: relu
-    dropout: 0.1
+    dropout: 0.15                    # slightly more dropout for larger model
 
   reversion:
-    hidden_sizes: [128, 128, 64]
+    hidden_sizes: [512, 256, 128]
     activation: relu
-    dropout: 0.1
+    dropout: 0.15
     z_score_threshold: 3.0
 
 gating:
-  hidden_sizes: [64, 32]
+  hidden_sizes: [256, 128]          # 4× wider meta-controller
   n_agents: 3
 
 rl:
-  algorithm: SAC  # SAC | PPO
-  gamma: 0.99
-  learning_rate: 0.0003
-  buffer_size: 100000
-  batch_size: 256
+  algorithm: TQC
+  gamma: 0.995                      # 0.99→0.995: longer time horizon (more patient)
+  learning_rate: 0.0001             # 3e-4→1e-4: lower LR for larger model stability
+  buffer_size: 2000000              # 100K→2M: 20× more diverse experience
+  batch_size: 2048                  # 256→2048: 8× better GPU saturation
   ent_coef: auto
   tau: 0.005
-  train_freq: 4
-  gradient_steps: 4
-  learning_starts: 5000
+  train_freq: 1                     # 4→1: update every step (n_envs provides diversity)
+  gradient_steps: 2                 # 4→2: 2 gradient steps per env step
+  learning_starts: 10000            # 5K→10K: longer warmup for larger buffer
+  top_quantiles_to_drop: 2
+  n_quantiles: 25
+  use_cosine_lr: true
 
 # Multi-Timeframe settings
 mtf:
   enabled: true
   lookback:
-    d1: 5    # 5 daily bars (~1 trading week)
-    h1: 20   # 20 hourly bars (~1 trading day)
-    m5: 20   # 20 five-min bars (~1.7 hours)
+    d1: 30    # 20→30: 1.5 trading months for macro context
+    h1: 120   # 60→120: 5 trading days of hourly data
+    m5: 60    # 40→60: 5 hours of 5-min data
   fusion:
     dropout: 0.1
   n_mtf_context: 6
+
+# MC Dropout uncertainty estimation
+uncertainty:
+  enabled: true
+  n_samples: 20              # 10→20: more precise uncertainty estimates
+  uncertainty_weight: 0.5
+  min_position_scale: 0.1
+
+# Ensemble diversity regularization
+diversity:
+  enabled: true
+  diversity_weight: 0.01
+  entropy_weight: 0.03       # 0.1→0.03: was 10x diversity_weight, causing noisy agents
+  update_freq: 50            # 100→50: more frequent diversity updates
+  batch_size: 512            # 256→512: larger diversity batches
+  lr: 0.0001

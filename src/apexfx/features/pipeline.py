@@ -6,12 +6,15 @@ import pandas as pd
 
 from apexfx.features import BaseFeatureExtractor
 from apexfx.features.clustering import ClusteringExtractor
+from apexfx.features.fundamental import FundamentalExtractor
 from apexfx.features.hurst import HurstExtractor
 from apexfx.features.intermarket_corr import IntermarketCorrExtractor
 from apexfx.features.normalizer import FeatureNormalizer
 from apexfx.features.order_flow import OrderFlowExtractor
 from apexfx.features.regime import RegimeExtractor
 from apexfx.features.spectral import SpectralExtractor
+from apexfx.features.structure import StructureExtractor
+from apexfx.features.orderbook import OrderBookExtractor
 from apexfx.features.volume_profile import VolumeProfileExtractor
 from apexfx.utils.logging import get_logger
 
@@ -34,7 +37,7 @@ class FeaturePipeline:
 
     @staticmethod
     def _default_extractors() -> list[BaseFeatureExtractor]:
-        return [
+        extractors = [
             VolumeProfileExtractor(window=100),
             OrderFlowExtractor(),
             HurstExtractor(window=252),
@@ -42,7 +45,19 @@ class FeaturePipeline:
             IntermarketCorrExtractor(),
             RegimeExtractor(),
             ClusteringExtractor(window=200),
+            FundamentalExtractor(),
+            StructureExtractor(),
+            OrderBookExtractor(),
         ]
+
+        # Conditionally add SentimentExtractor (requires transformers package)
+        try:
+            from apexfx.features.sentiment import SentimentExtractor
+            extractors.append(SentimentExtractor())
+        except ImportError:
+            logger.debug("SentimentExtractor not available (transformers not installed)")
+
+        return extractors
 
     @property
     def feature_names(self) -> list[str]:
@@ -100,6 +115,14 @@ class FeaturePipeline:
             exclude_cols = list(bars.columns) + [
                 "regime_label", "hurst_regime", "in_liquidity_zone",
                 "delta_divergence",
+                # Phase 3: binary/categorical features should not be z-scored
+                "news_impact_active", "conflicting_signals",
+                "structure_break_bull", "structure_break_bear",
+                "structure_trend", "retest_signal",
+                # Phase 4: orderbook features that are already normalized
+                "bid_ask_imbalance", "book_pressure",
+                # Phase 4: sentiment features that are already bounded
+                "headline_count",
             ]
             normalize_cols = [c for c in feature_cols if c not in exclude_cols]
             if normalize_cols:

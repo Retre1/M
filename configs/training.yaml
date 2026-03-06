@@ -1,50 +1,100 @@
+# ============================================================================
+# ApexFX Training Configuration — Optimised for 2× RTX 4090 + 38 vCPUs
+#
+# Key changes from prototype:
+#   - 5× more total timesteps (1.1M → 5M)
+#   - Longer curriculum stages for deeper learning
+#   - More aggressive EWC for regime adaptation
+#   - World model with imagination rollouts enabled
+# ============================================================================
+
 curriculum:
   stages:
-    - name: synthetic_clean
-      description: "Clean synthetic data with clear regimes"
-      total_timesteps: 200000
-      data_source: synthetic
-      synthetic_params:
-        n_steps: 20000
-        mu: 0.0001
-        sigma: 0.01
-        noise_std: 0.0
-        black_swan_intensity: 0.0
+    - name: real_warmup
+      description: "Filtered real data: extreme bars removed for stable initialisation"
+      total_timesteps: 500000       # 300K→500K: longer warmup
+      data_source: real
+      filter_quantile: 0.95
 
-    - name: noisy_real
-      description: "Noisy synthetic + simple real data"
-      total_timesteps: 400000
-      data_source: mixed
-      synthetic_params:
-        noise_std: 0.005
-        black_swan_intensity: 0.0
+    - name: real_full
+      description: "Full real dataset — all market conditions including spikes"
+      total_timesteps: 2000000      # 600K→2M: deep learning on full data
+      data_source: real
       warm_start: true
 
-    - name: full_real
-      description: "Full real data with black swans"
-      total_timesteps: 600000
+    - name: real_augmented
+      description: "Noise-augmented real data for robustness"
+      total_timesteps: 1500000      # 200K→1.5M: heavy robustness training
       data_source: real
-      synthetic_params:
-        black_swan_intensity: 0.001
-        black_swan_magnitude_std: 5.0
+      augmentation:
+        noise_std: 0.003            # 0.002→0.003: slightly more noise
+        price_shift_std: 0.002      # 0.001→0.002: larger price shifts
+      warm_start: true
+
+    - name: real_adversarial
+      description: "Final stage with strong adversarial perturbations"
+      total_timesteps: 1000000      # NEW: hardening stage
+      data_source: real
+      augmentation:
+        noise_std: 0.005
+        price_shift_std: 0.003
       warm_start: true
 
 walk_forward:
-  train_window_days: 252
-  test_window_days: 63
+  train_window_days: 504          # 252→504: 2 years training window
+  test_window_days: 126           # 63→126: 6 months test window
   step_size_days: 63
-  n_folds: null  # null = use all data
+  n_folds: null
   retrain_each_fold: true
 
 evaluation:
-  eval_freq: 10000
-  n_eval_episodes: 10
+  eval_freq: 25000                # 10K→25K: less frequent eval (more training)
+  n_eval_episodes: 20             # 10→20: more reliable eval
   deterministic: true
 
 checkpointing:
-  save_freq: 50000
-  keep_best_n: 3
+  save_freq: 100000               # 50K→100K
+  keep_best_n: 5                  # 3→5: keep more checkpoints
 
 early_stopping:
-  patience: 10
-  min_delta: 0.01
+  patience: 15                    # 10→15: more patience for larger model
+  min_delta: 0.005                # 0.01→0.005: finer improvement detection
+
+# Elastic Weight Consolidation
+ewc:
+  enabled: true
+  lambda_ewc: 5000.0
+  gamma_ewc: 0.9
+  fisher_n_samples: 5000          # 2000→5000: more precise Fisher
+  update_freq: 10
+  lr: 0.0001
+
+# Adversarial Training
+adversarial:
+  enabled: true
+  noise_std: 0.01
+  noise_schedule: cosine
+  decay_steps: 2000000            # 500K→2M: match longer training
+  warmup_steps: 5000              # 1K→5K: longer warmup
+  adversarial_prob: 0.5
+  gradient_penalty_weight: 0.1
+  gradient_penalty_freq: 50       # 100→50: more frequent GP
+
+# World Model
+world_model:
+  enabled: true
+  d_latent: 64                    # 32→64: richer latent space
+  d_hidden: 256                   # 128→256: larger dynamics model
+  n_ensemble: 7                   # 5→7: better uncertainty (odd for majority vote)
+  update_freq: 50                 # 100→50: more frequent WM training
+  batch_size: 512                 # 256→512: larger WM batches
+  lr: 0.0003
+  curiosity_weight: 0.01
+  imagination_horizon: 5          # 0→5: enable imagination rollouts
+
+# Temporal Commitment
+temporal_commitment:
+  enabled: true
+  min_hold: 5
+  commitment_penalty: 0.1
+  action_smoothing_alpha: 0.3

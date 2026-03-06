@@ -91,20 +91,17 @@ class InterpretableMultiHeadAttention(nn.Module):
         # Weighted sum of values per head
         head_outputs = torch.matmul(attn_weights_per_head, V)  # (batch, n_heads, seq_q, d_k)
 
-        # Combine heads via interpretable weight-sharing
+        # Combine heads via interpretable weight-sharing (TFT-style)
         # head_outputs: (batch, n_heads, seq_q, d_k) → (batch, seq_q, n_heads, d_k)
         head_outputs = head_outputs.permute(0, 2, 1, 3)
 
-        # Weight each head's contribution via W_h for interpretability
-        # This produces a single d_k-dimensional output per position
+        # W_h learns importance of each head per position
         head_weights = self.W_h(head_outputs)  # (batch, seq_q, n_heads, 1)
         head_weights = F.softmax(head_weights, dim=2)
-        output = (head_outputs * head_weights).sum(dim=2)  # (batch, seq_q, d_k)
 
-        # Project back to d_model
-        # We need to go from d_k to d_model
-        # Pad or project
-        output = self._concat_heads_interpretable(head_outputs, batch)
+        # Weight each head BEFORE concatenation so W_o sees modulated heads
+        weighted_heads = head_outputs * head_weights  # (batch, seq_q, n_heads, d_k)
+        output = weighted_heads.reshape(batch, -1, self.n_heads * self.d_k)
         output = self.W_o(output)
 
         return output, attn_weights
