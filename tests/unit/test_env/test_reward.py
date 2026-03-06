@@ -64,6 +64,7 @@ class TestSortinoReward:
 class TestQuantumZScoreReward:
     def test_zscore_bonus(self):
         reward_fn = QuantumZScoreReward(z_score_bonus_weight=0.5)
-        # Positive return against negative z-score (mean reversion trade)
-        r = reward_fn.compute_with_zscore(101_000, 100_000, price_z_score=-3.5)
+        # Set z-score first (as the env does), then compute
+        reward_fn.set_zscore(-3.5)
+        r = reward_fn.compute(101_000, 100_000)
         assert isinstance(r, float)

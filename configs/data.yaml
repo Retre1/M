@@ -5,7 +5,7 @@ timeframes:
   - D1
 
 lookback_bars: 500
-feature_window: 20
+feature_window: 60
 tick_buffer_size: 100000
 bar_history_days: 750
 
@@ -18,3 +18,13 @@ collection:
   poll_interval_ms: 100
   flush_interval_s: 60
   max_ticks_per_flush: 50000
+
+calendar:
+  enabled: true
+  path: data/economic_calendar.csv
+  currencies: [USD, EUR, GBP, JPY]
+  base_currency: EUR
+  quote_currency: USD
+  auto_fetch: true
+  fetch_interval_hours: 1
+  source: forex_factory

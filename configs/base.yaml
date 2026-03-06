@@ -1,3 +1,10 @@
+# ============================================================================
+# ApexFX Base Configuration — 2× RTX 4090 Production Server
+#
+# Hardware: 2× RTX 4090 (48GB each), 128GB DDR4, 38 vCPUs
+# OS: Ubuntu 24.04 + CUDA 12.8
+# ============================================================================
+
 seed: 42
 device: auto  # auto | cuda | mps | cpu
 
@@ -9,6 +16,19 @@ paths:
 logging:
   level: INFO
   format: json  # json | console
-  file: ${paths.logs_dir}/apexfx.log
-  rotation_mb: 50
-  backup_count: 5
+  file: ./logs/apexfx.log
+  rotation_mb: 100    # larger log files for long training runs
+  backup_count: 10
+
+# GPU Performance Tuning
+performance:
+  n_envs: 16             # 16 parallel environments across 38 vCPUs
+  mixed_precision: true   # FP16 AMP — 2× throughput on Tensor Cores
+  torch_compile: true     # PyTorch 2.x graph optimisation (15-30% speedup)
+  compile_mode: reduce-overhead  # reduce-overhead | max-autotune | default
+  cudnn_benchmark: true   # auto-tune algorithms for fixed input sizes
+  tf32: true              # TF32 matmul on Ada Lovelace (2× throughput)
+  pin_memory: true        # async CPU→GPU DMA transfers
+  prefetch_factor: 2
+  gradient_checkpointing: false  # not needed with 96GB VRAM
+  dataloader_workers: 8   # parallel data loading workers

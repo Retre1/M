@@ -29,11 +29,26 @@ class LoggingConfig(BaseModel):
     backup_count: int = 5
 
 
+class PerformanceConfig(BaseModel):
+    """Hardware-aware performance tuning."""
+    n_envs: int = 1               # Parallel environments (auto-detect if 0)
+    mixed_precision: bool = True   # FP16 AMP on CUDA
+    torch_compile: bool = True     # torch.compile() graph optimisation
+    compile_mode: str = "reduce-overhead"  # default | reduce-overhead | max-autotune
+    cudnn_benchmark: bool = True
+    tf32: bool = True             # Tensor Float 32 on Ampere+
+    pin_memory: bool = True
+    prefetch_factor: int = 2
+    gradient_checkpointing: bool = False  # Trade speed for VRAM
+    dataloader_workers: int = 4
+
+
 class BaseConfig(BaseModel):
     seed: int = 42
     device: DeviceType = DeviceType.AUTO
     paths: PathsConfig = Field(default_factory=PathsConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
+    performance: PerformanceConfig = Field(default_factory=PerformanceConfig)
 
 
 # --- Symbols ---
@@ -74,6 +89,18 @@ class CollectionConfig(BaseModel):
     max_ticks_per_flush: int = 50_000
 
 
+class CalendarConfig(BaseModel):
+    """Economic calendar data configuration."""
+    enabled: bool = True
+    path: str = "data/economic_calendar.csv"
+    currencies: list[str] = Field(default_factory=lambda: ["USD", "EUR", "GBP", "JPY"])
+    base_currency: str = "EUR"
+    quote_currency: str = "USD"
+    auto_fetch: bool = True
+    fetch_interval_hours: int = 1
+    source: str = "forex_factory"
+
+
 class DataConfig(BaseModel):
     timeframes: list[str] = Field(default_factory=lambda: ["M1", "M5", "H1", "D1"])
     lookback_bars: int = 500
@@ -82,6 +109,7 @@ class DataConfig(BaseModel):
     bar_history_days: int = 750
     storage: StorageConfig = Field(default_factory=StorageConfig)
     collection: CollectionConfig = Field(default_factory=CollectionConfig)
+    calendar: CalendarConfig = Field(default_factory=CalendarConfig)
 
 
 # --- Model ---
@@ -117,6 +145,7 @@ class GatingConfig(BaseModel):
 
 class RLAlgorithm(str, Enum):
     SAC = "SAC"
+    TQC = "TQC"
     PPO = "PPO"
 
 
@@ -131,6 +160,11 @@ class RLConfig(BaseModel):
     train_freq: int = 1
     gradient_steps: int = 1
     learning_starts: int = 10_000
+    # TQC-specific
+    top_quantiles_to_drop: int = 2
+    n_quantiles: int = 25
+    # Cosine LR schedule
+    use_cosine_lr: bool = True
 
 
 class MTFLookbackConfig(BaseModel):
@@ -150,6 +184,38 @@ class MTFConfig(BaseModel):
     n_mtf_context: int = 6
 
 
+class UncertaintyConfig(BaseModel):
+    """MC Dropout uncertainty estimation for position scaling."""
+    enabled: bool = True
+    n_samples: int = 10
+    uncertainty_weight: float = 0.5
+    min_position_scale: float = 0.1
+
+
+class EnsembleDiversityConfig(BaseModel):
+    """Ensemble diversity regularization to prevent agent collapse."""
+    enabled: bool = True
+    diversity_weight: float = 0.01
+    entropy_weight: float = 0.1
+    update_freq: int = 100
+    batch_size: int = 256
+    lr: float = 1e-4
+
+
+class StructureConfig(BaseModel):
+    """Structure break detection configuration."""
+    swing_period: int = 5
+    confluence_atr_mult: float = 1.0
+    breakout_volume_mult: float = 1.5
+
+
+class PositionManagementConfig(BaseModel):
+    """Advanced position management configuration."""
+    max_layers: int = 3
+    breakeven_atr_mult: float = 1.5
+    layer_size_decay: float = 0.5
+
+
 class ModelConfig(BaseModel):
     tft: TFTConfig = Field(default_factory=TFTConfig)
     trend_agent: AgentConfig = Field(default_factory=AgentConfig)
@@ -157,12 +223,17 @@ class ModelConfig(BaseModel):
     gating: GatingConfig = Field(default_factory=GatingConfig)
     rl: RLConfig = Field(default_factory=RLConfig)
     mtf: MTFConfig = Field(default_factory=MTFConfig)
+    uncertainty: UncertaintyConfig = Field(default_factory=UncertaintyConfig)
+    diversity: EnsembleDiversityConfig = Field(default_factory=EnsembleDiversityConfig)
+    structure: StructureConfig = Field(default_factory=StructureConfig)
+    position_management: PositionManagementConfig = Field(default_factory=PositionManagementConfig)
 
 
 # --- Training ---
 
 
 class SyntheticParams(BaseModel):
+    """Legacy synthetic data parameters (kept for backward compatibility)."""
     n_steps: int = 100_000
     mu: float = 0.0001
     sigma: float = 0.01
@@ -171,13 +242,22 @@ class SyntheticParams(BaseModel):
     black_swan_magnitude_std: float = 5.0
 
 
+class DataAugmentationConfig(BaseModel):
+    """Noise augmentation applied to real data for robustness training."""
+    noise_std: float = 0.002
+    price_shift_std: float = 0.001
+
+
 class CurriculumStage(BaseModel):
     name: str
     description: str
     total_timesteps: int
-    data_source: Literal["synthetic", "mixed", "real"]
+    data_source: Literal["real", "synthetic", "mixed"] = "real"
     synthetic_params: SyntheticParams = Field(default_factory=SyntheticParams)
     warm_start: bool = False
+    # Real-data curriculum options
+    filter_quantile: float | None = None
+    augmentation: DataAugmentationConfig | None = None
 
 
 class WalkForwardConfig(BaseModel):
@@ -186,6 +266,7 @@ class WalkForwardConfig(BaseModel):
     step_size_days: int = 63
     n_folds: int | None = None
     retrain_each_fold: bool = True
+    auto_validate: bool = False  # Run walk-forward validation after training
 
 
 class EvaluationConfig(BaseModel):
@@ -208,12 +289,81 @@ class CurriculumConfig(BaseModel):
     stages: list[CurriculumStage] = Field(default_factory=list)
 
 
+class EWCConfig(BaseModel):
+    """Elastic Weight Consolidation — prevents catastrophic forgetting between stages."""
+    enabled: bool = True
+    lambda_ewc: float = 5000.0
+    gamma_ewc: float = 0.9
+    fisher_n_samples: int = 2000
+    update_freq: int = 10
+    lr: float = 1e-4
+
+
+class AdversarialConfig(BaseModel):
+    """Adversarial training for robustness against distribution shift."""
+    enabled: bool = True
+    noise_std: float = 0.01
+    noise_schedule: Literal["constant", "linear", "cosine"] = "cosine"
+    decay_steps: int = 500_000
+    warmup_steps: int = 1000
+    adversarial_prob: float = 0.5
+    gradient_penalty_weight: float = 0.1
+    gradient_penalty_freq: int = 100
+
+
+class WorldModelConfig(BaseModel):
+    """Learned dynamics model for model-based planning and curiosity."""
+    enabled: bool = True
+    d_latent: int = 32
+    d_hidden: int = 128
+    n_ensemble: int = 5
+    update_freq: int = 100
+    batch_size: int = 256
+    lr: float = 3e-4
+    curiosity_weight: float = 0.01
+    imagination_horizon: int = 0
+
+
+class TemporalCommitmentConfig(BaseModel):
+    """Temporal commitment for trade plan persistence."""
+    enabled: bool = True
+    min_hold: int = 5
+    commitment_penalty: float = 0.1
+    action_smoothing_alpha: float = 0.3
+
+
+class OnlineLearningConfig(BaseModel):
+    """Adaptive online learning (retraining on recent data)."""
+    enabled: bool = False
+    mode: Literal["fine_tune", "buffer_update"] = "fine_tune"
+    retrain_window_days: int = 30
+    retrain_steps: int = 10_000
+    retrain_lr: float = 1e-5
+    min_new_bars: int = 24     # Minimum bars before considering retrain
+    validation_sharpe_min: float = 0.0  # Reject if new model is worse
+    check_interval_hours: int = 1
+
+
+class ShadowTradingConfig(BaseModel):
+    """A/B testing via shadow (paper) trading of candidate models."""
+    enabled: bool = False
+    evaluation_bars: int = 500
+    promotion_sharpe_delta: float = 0.3  # Shadow must beat live by this delta
+    gradual_rollout_bars: int = 200      # Bars for gradual 0→100% rollout
+
+
 class TrainingConfig(BaseModel):
     curriculum: CurriculumConfig = Field(default_factory=CurriculumConfig)
     walk_forward: WalkForwardConfig = Field(default_factory=WalkForwardConfig)
     evaluation: EvaluationConfig = Field(default_factory=EvaluationConfig)
     checkpointing: CheckpointConfig = Field(default_factory=CheckpointConfig)
     early_stopping: EarlyStoppingConfig = Field(default_factory=EarlyStoppingConfig)
+    ewc: EWCConfig = Field(default_factory=EWCConfig)
+    adversarial: AdversarialConfig = Field(default_factory=AdversarialConfig)
+    world_model: WorldModelConfig = Field(default_factory=WorldModelConfig)
+    temporal_commitment: TemporalCommitmentConfig = Field(default_factory=TemporalCommitmentConfig)
+    online_learning: OnlineLearningConfig = Field(default_factory=OnlineLearningConfig)
+    shadow_trading: ShadowTradingConfig = Field(default_factory=ShadowTradingConfig)
 
 
 # --- Risk ---
@@ -240,6 +390,36 @@ class HedgingConfig(BaseModel):
     hedge_instrument: str | None = None
 
 
+class StrategyFilterConfig(BaseModel):
+    """Rule-based trade filter configuration."""
+    enabled: bool = True
+    news_blackout_threshold: float = 0.5
+    time_to_event_threshold: float = 0.01
+    min_fundamental_bias: float = 0.3
+    require_structure_confirm: bool = True
+    exit_on_conflict: bool = True
+    reduce_scale_pre_news: float = 0.5
+    pre_news_time_threshold: float = 0.1
+    block_against_bias: bool = True
+    min_bias_for_direction: float = 0.5
+
+
+class PortfolioVaRConfig(BaseModel):
+    """Portfolio-level VaR configuration for multi-asset risk."""
+    multi_asset: bool = False
+    correlation_lookback_days: int = 60
+    use_cvar: bool = True  # Use CVaR (Expected Shortfall) instead of VaR
+
+
+class StressTestConfig(BaseModel):
+    """Stress testing configuration."""
+    enabled: bool = True
+    run_on_startup: bool = True
+    monte_carlo_sims: int = 10_000
+    monte_carlo_horizon_days: int = 21
+    survival_threshold_pct: float = 0.50  # Must survive with >50% equity
+
+
 class RiskConfig(BaseModel):
     daily_var_limit: float = 0.02
     max_drawdown_pct: float = 0.05
@@ -249,6 +429,9 @@ class RiskConfig(BaseModel):
     position_sizing: PositionSizingConfig = Field(default_factory=PositionSizingConfig)
     cooldown: CooldownConfig = Field(default_factory=CooldownConfig)
     hedging: HedgingConfig = Field(default_factory=HedgingConfig)
+    strategy_filter: StrategyFilterConfig = Field(default_factory=StrategyFilterConfig)
+    portfolio_var: PortfolioVaRConfig = Field(default_factory=PortfolioVaRConfig)
+    stress_test: StressTestConfig = Field(default_factory=StressTestConfig)
 
 
 # --- Execution ---
@@ -279,6 +462,16 @@ class RetryConfig(BaseModel):
     backoff_max_ms: int = 5000
 
 
+class SmartExecutionConfig(BaseModel):
+    """Smart order execution algorithm configuration."""
+    algorithm: Literal["direct", "twap", "vwap", "is", "auto"] = "auto"
+    urgency: float = 0.5  # 0=patient, 1=aggressive
+    twap_threshold_lots: float = 0.5  # Orders < this use direct market
+    vwap_threshold_lots: float = 2.0  # Orders < this use TWAP
+    is_threshold_lots: float = 5.0    # Orders > vwap threshold use IS
+    max_deviation_pct: float = 0.005  # Max price deviation before abort
+
+
 class ExecutionConfig(BaseModel):
     order_type: Literal["market", "limit"] = "limit"
     limit_offset_pips: float = 0.5
@@ -288,6 +481,7 @@ class ExecutionConfig(BaseModel):
     session_filter: SessionFilterConfig = Field(default_factory=SessionFilterConfig)
     news_blackout: NewsBlackoutConfig = Field(default_factory=NewsBlackoutConfig)
     retry: RetryConfig = Field(default_factory=RetryConfig)
+    smart_execution: SmartExecutionConfig = Field(default_factory=SmartExecutionConfig)
 
 
 # --- Dashboard ---

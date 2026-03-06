@@ -1,4 +1,9 @@
-"""Trend-following agent operating on H1/D1 timeframe features."""
+"""Trend-following agent operating on H1/D1 timeframe features.
+
+Supports cross-agent attention: ``encode()`` returns a hidden representation
+that participates in multi-agent attention, then ``act()`` produces the final
+action from the (optionally enriched) hidden.
+"""
 
 from __future__ import annotations
 
@@ -38,6 +43,52 @@ class TrendAgent(nn.Module):
         # Tanh output to bound action to [-1, 1]
         self.tanh = nn.Tanh()
 
+    # ------------------------------------------------------------------
+    # Cross-agent attention API
+    # ------------------------------------------------------------------
+
+    @property
+    def hidden_dim(self) -> int:
+        """Dimensionality of the penultimate hidden representation."""
+        return self.feature_net.hidden_dim
+
+    def encode(
+        self,
+        tft_state: torch.Tensor,
+        trend_features: torch.Tensor,
+    ) -> torch.Tensor:
+        """Return hidden representation *before* action head.
+
+        Returns
+        -------
+        hidden : (batch, hidden_dim)
+        """
+        combined = torch.cat([tft_state, trend_features], dim=-1)
+        return self.feature_net.encode(combined)
+
+    def act(
+        self,
+        hidden: torch.Tensor,
+        specialist_features: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Produce action from (optionally enriched) hidden.
+
+        Parameters
+        ----------
+        hidden : (batch, hidden_dim)
+            Penultimate hidden — may be enriched by cross-agent attention.
+        specialist_features : ignored (present for uniform API)
+
+        Returns
+        -------
+        action : (batch, 1) in [-1, 1]
+        """
+        return self.tanh(self.feature_net.decode(hidden))
+
+    # ------------------------------------------------------------------
+    # Standard forward (backward-compatible)
+    # ------------------------------------------------------------------
+
     def forward(
         self,
         tft_state: torch.Tensor,
@@ -56,6 +107,5 @@ class TrendAgent(nn.Module):
                 -1.0: strong sell signal (confident downtrend)
                  0.0: no trend detected / neutral
         """
-        combined = torch.cat([tft_state, trend_features], dim=-1)
-        raw_action = self.feature_net(combined)
-        return self.tanh(raw_action)
+        hidden = self.encode(tft_state, trend_features)
+        return self.act(hidden)

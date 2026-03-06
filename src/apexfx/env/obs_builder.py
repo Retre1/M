@@ -21,6 +21,8 @@ class ObservationBuilder:
         n_reversion_features: int = 8,
         n_regime_features: int = 6,
         n_time_features: int = 5,
+        n_fundamental_features: int = 8,
+        n_structure_features: int = 8,
         lookback: int = 100,
     ) -> None:
         self.n_market_features = n_market_features
@@ -28,6 +30,8 @@ class ObservationBuilder:
         self.n_reversion_features = n_reversion_features
         self.n_regime_features = n_regime_features
         self.n_time_features = n_time_features
+        self.n_fundamental_features = n_fundamental_features
+        self.n_structure_features = n_structure_features
         self.lookback = lookback
 
         # Feature column mappings
@@ -46,6 +50,17 @@ class ObservationBuilder:
             "hurst_exponent", "realized_vol", "trend_strength",
             "regime_trending", "regime_mean_reverting", "regime_flat",
         ]
+        self.fundamental_columns: list[str] = [
+            "news_surprise_score", "news_impact_active", "time_to_next_event",
+            "fundamental_bias", "rate_differential", "hawkish_dovish_score",
+            "event_volatility_ratio", "conflicting_signals",
+        ]
+        self.structure_columns: list[str] = [
+            "swing_high_distance", "swing_low_distance",
+            "structure_break_bull", "structure_break_bear",
+            "structure_trend", "level_confluence",
+            "breakout_strength", "retest_signal",
+        ]
 
     def build(
         self,
@@ -56,6 +71,10 @@ class ObservationBuilder:
         time_in_position: float,
         portfolio_value: float,
         initial_balance: float = 100_000,
+        n_layers: int = 0,
+        breakeven_active: bool = False,
+        distance_to_stop: float = 0.0,
+        avg_entry_distance: float = 0.0,
     ) -> dict[str, np.ndarray]:
         """
         Build observation dict from feature DataFrame and current state.
@@ -98,6 +117,16 @@ class ObservationBuilder:
         regime_data = self._extract_latest(features, current_idx, self.regime_columns,
                                            self.n_regime_features)
 
+        # Fundamental features: latest values
+        fundamental_data = self._extract_latest(features, current_idx,
+                                                self.fundamental_columns,
+                                                self.n_fundamental_features)
+
+        # Structure features: latest values
+        structure_data = self._extract_latest(features, current_idx,
+                                              self.structure_columns,
+                                              self.n_structure_features)
+
         # Time features: sinusoidal encoding for each step in lookback
         time_data = np.zeros((self.lookback, self.n_time_features), dtype=np.float32)
         for i, idx in enumerate(range(start_idx, current_idx + 1)):
@@ -108,12 +137,16 @@ class ObservationBuilder:
                 time_data[self.lookback - len(window) + i, :4] = time_enc
                 time_data[self.lookback - len(window) + i, 4] = session / 5.0  # normalize
 
-        # Position state
+        # Position state (expanded to 8 dims for position management)
         position_state = np.array([
             position,
             unrealized_pnl / (initial_balance + 1e-10),
             min(time_in_position / 100.0, 1.0),  # normalize
             portfolio_value / (initial_balance + 1e-10) - 1.0,  # relative to start
+            n_layers / 3.0,                      # position layers (0-1)
+            1.0 if breakeven_active else 0.0,    # break-even stop active
+            distance_to_stop,                    # stop distance / ATR
+            avg_entry_distance,                  # (price - avg_entry) / ATR
         ], dtype=np.float32)
 
         return {
@@ -122,6 +155,8 @@ class ObservationBuilder:
             "trend_features": trend_data,
             "reversion_features": reversion_data,
             "regime_features": regime_data,
+            "fundamental_features": fundamental_data,
+            "structure_features": structure_data,
             "position_state": position_state,
         }
 

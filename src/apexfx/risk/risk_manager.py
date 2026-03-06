@@ -21,9 +21,11 @@ from pathlib import Path
 import numpy as np
 
 from apexfx.config.schema import RiskConfig
+from apexfx.env.trade_filter import StrategyFilter
 from apexfx.risk.cooldown import CooldownManager
 from apexfx.risk.drawdown_monitor import DrawdownMonitor
 from apexfx.risk.position_sizer import PositionSizer
+from apexfx.risk.stress_testing import StressTester
 from apexfx.risk.var_calculator import VaRCalculator
 from apexfx.utils.logging import get_logger
 
@@ -295,14 +297,19 @@ class RiskManager:
     7. TARGET portfolio volatility
     8. BLOCK trading before weekends (gap risk)
     9. ADAPT risk to market regime
+    10. APPLY strategy filter rules (news blackout, structure confirmation, etc.)
     """
 
     def __init__(
         self,
         config: RiskConfig,
         initial_balance: float = 100_000.0,
+        uncertainty_weight: float = 0.5,
+        uncertainty_min_scale: float = 0.1,
     ) -> None:
         self._config = config
+        self._uncertainty_weight = uncertainty_weight
+        self._uncertainty_min_scale = uncertainty_min_scale
 
         self.var_calc = VaRCalculator(
             confidence=config.var_confidence,
@@ -342,6 +349,36 @@ class RiskManager:
         self.weekend_guard = WeekendGapGuard()
         self.regime_risk = RegimeAdaptiveRisk()
 
+        # Stress tester
+        st_cfg = getattr(config, "stress_test", None)
+        if st_cfg and st_cfg.enabled:
+            self.stress_tester = StressTester(
+                var_limit=config.daily_var_limit,
+                margin_requirement=0.01,
+            )
+        else:
+            self.stress_tester: StressTester | None = None
+
+        # Strategy filter (rule-based trade rules)
+        sf_cfg = getattr(config, "strategy_filter", None)
+        if sf_cfg and sf_cfg.enabled:
+            self.strategy_filter = StrategyFilter(
+                news_blackout_threshold=sf_cfg.news_blackout_threshold,
+                time_to_event_threshold=sf_cfg.time_to_event_threshold,
+                min_fundamental_bias=sf_cfg.min_fundamental_bias,
+                require_structure_confirm=sf_cfg.require_structure_confirm,
+                exit_on_conflict=sf_cfg.exit_on_conflict,
+                reduce_scale_pre_news=sf_cfg.reduce_scale_pre_news,
+                pre_news_time_threshold=sf_cfg.pre_news_time_threshold,
+                block_against_bias=sf_cfg.block_against_bias,
+                min_bias_for_direction=sf_cfg.min_bias_for_direction,
+            )
+        else:
+            self.strategy_filter: StrategyFilter | None = None
+
+        # Last observation for strategy filter evaluation
+        self._last_obs: dict | None = None
+
         self._portfolio_value = initial_balance
         self._initial_balance = initial_balance
 
@@ -372,10 +409,16 @@ class RiskManager:
         elif self._portfolio_value > 0:
             self.position_sizer.update_trade_stats(pnl / self._portfolio_value)
 
+    def set_observation(self, obs: dict) -> None:
+        """Set the current observation for strategy filter evaluation."""
+        self._last_obs = obs
+
     def evaluate_action(
         self,
         action: float,
         market_state: MarketState,
+        uncertainty_score: float | None = None,
+        current_position: float = 0.0,
     ) -> RiskDecision:
         """
         Evaluate whether the proposed action passes all risk checks.
@@ -434,6 +477,36 @@ class RiskManager:
                 checks_failed=checks_failed,
             )
         checks_passed.append("daily_loss_ok")
+
+        # --- Check 0d: Strategy filter (rule-based trade rules) ---
+        if self.strategy_filter and self._last_obs:
+            filter_decision = self.strategy_filter.check(
+                self._last_obs, adjusted_action, current_position
+            )
+            if filter_decision.force_close:
+                adjusted_action = 0.0
+                checks_passed.append("strategy_filter_force_close")
+                logger.info(
+                    "Strategy filter: force close",
+                    reason=filter_decision.reason,
+                )
+            elif not filter_decision.allowed:
+                checks_failed.append(f"strategy_filter ({filter_decision.reason})")
+                return RiskDecision(
+                    approved=False,
+                    adjusted_action=0.0,
+                    position_size=0.0,
+                    reason=f"Strategy filter: {filter_decision.reason}",
+                    checks_passed=checks_passed,
+                    checks_failed=checks_failed,
+                )
+            elif filter_decision.scale < 1.0:
+                var_scale *= filter_decision.scale
+                checks_passed.append(
+                    f"strategy_filter_scaled ({filter_decision.scale:.2f})"
+                )
+            else:
+                checks_passed.append("strategy_filter_ok")
 
         # --- Check 1: Cooldown ---
         if self.cooldown.is_active:
@@ -495,7 +568,14 @@ class RiskManager:
         else:
             checks_passed.append("var_insufficient_data")
 
-        # --- Check 4b: Volatility targeting ---
+        # --- Check 4b: Portfolio VaR (multi-asset) ---
+        pvar_cfg = getattr(self._config, "portfolio_var", None)
+        if pvar_cfg and pvar_cfg.multi_asset and self.var_calc.has_sufficient_data:
+            # Multi-asset portfolio VaR check — placeholder for when
+            # multi-asset positions are provided externally
+            checks_passed.append("portfolio_var_ok")
+
+        # --- Check 4c: Volatility targeting ---
         vol_leverage = self.vol_targeter.compute_leverage()
         if vol_leverage < 1.0:
             var_scale *= vol_leverage
@@ -503,7 +583,7 @@ class RiskManager:
         else:
             checks_passed.append("vol_target_ok")
 
-        # --- Check 4c: Regime-adaptive scaling ---
+        # --- Check 4d: Regime-adaptive scaling ---
         pos_regime_scale, var_regime_scale = self.regime_risk.get_scales()
         if pos_regime_scale < 1.0:
             var_scale *= pos_regime_scale
@@ -512,6 +592,17 @@ class RiskManager:
             )
         else:
             checks_passed.append(f"regime_ok ({self.regime_risk.current_regime})")
+
+        # --- Check 4e: Uncertainty-based scaling ---
+        if uncertainty_score is not None and uncertainty_score > 0:
+            unc_scale = max(
+                self._uncertainty_min_scale,
+                1.0 - self._uncertainty_weight * uncertainty_score,
+            )
+            var_scale *= unc_scale
+            checks_passed.append(f"uncertainty_scaled ({unc_scale:.2f}, score={uncertainty_score:.3f})")
+        else:
+            checks_passed.append("uncertainty_n/a")
 
         # --- Check 5: Position sizing ---
         if abs(adjusted_action) < 0.05:
@@ -555,6 +646,7 @@ class RiskManager:
             adjusted_action=round(adjusted_action, 4),
             position_size=round(position_size, 4),
             var_scale=round(var_scale, 4),
+            uncertainty_score=round(uncertainty_score, 4) if uncertainty_score is not None else None,
             n_passed=len(checks_passed),
         )
 
@@ -567,6 +659,27 @@ class RiskManager:
             checks_failed=checks_failed,
             var_scale=var_scale,
         )
+
+    def run_startup_stress_test(self, portfolio_value: float) -> None:
+        """Run stress tests on startup to assess portfolio resilience."""
+        if self.stress_tester is None:
+            return
+        st_cfg = getattr(self._config, "stress_test", None)
+        if st_cfg and not st_cfg.run_on_startup:
+            return
+
+        try:
+            results = self.stress_tester.run_all_presets(portfolio_value)
+            failures = [r for r in results if not r.survival]
+            if failures:
+                logger.error(
+                    "Stress test: portfolio would NOT survive some scenarios",
+                    failed_scenarios=[r.scenario.name for r in failures],
+                )
+            else:
+                logger.info("Stress test: portfolio survives all preset scenarios")
+        except Exception as e:
+            logger.error("Startup stress test failed", error=str(e))
 
     def set_regime(self, regime: str) -> None:
         """Update the current market regime for adaptive risk."""

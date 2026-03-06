@@ -11,12 +11,15 @@ import pandas as pd
 
 from apexfx.config.schema import AppConfig, SymbolConfig
 from apexfx.data.bar_aggregator import BarAggregator
+from apexfx.data.calendar_fetcher import CalendarFetcher
 from apexfx.data.data_store import DataStore
 from apexfx.data.mt5_client import MT5Client
 from apexfx.data.tick_collector import TickCollector
 from apexfx.execution.executor import Executor
+from apexfx.features.fundamental import FundamentalExtractor
 from apexfx.features.pipeline import FeaturePipeline
 from apexfx.live.health_check import HealthCheck
+from apexfx.live.shadow_trader import ShadowTrader, GradualRollout
 from apexfx.data.mtf_aligner import MTFDataAligner, MTFSlice
 from apexfx.env.mtf_obs_builder import MTFObservationBuilder
 from apexfx.live.signal_generator import MTFSignalGenerator, SignalGenerator
@@ -101,8 +104,70 @@ class LiveTradingLoop:
         else:
             self._signal_gen = SignalGenerator(model_file, device="cpu")
 
+        # Calendar fetcher for live economic calendar updates
+        self._calendar_fetcher: CalendarFetcher | None = None
+        self._fundamental_extractor: FundamentalExtractor | None = None
+        cal_cfg = config.data.calendar
+        if cal_cfg.enabled and cal_cfg.auto_fetch:
+            self._calendar_fetcher = CalendarFetcher()
+            # Find FundamentalExtractor in the pipeline
+            for ext in self._feature_pipeline._extractors:
+                if isinstance(ext, FundamentalExtractor):
+                    self._fundamental_extractor = ext
+                    break
+
+        # Calendar refresh interval
+        self._calendar_interval_s = cal_cfg.fetch_interval_hours * 3600
+
         # State persistence interval
         self._persist_interval_s = 60
+
+        # --- Phase 4C: Shadow Trading / A/B Testing ---
+        shadow_cfg = config.training.shadow_trading
+        if shadow_cfg.enabled:
+            self._shadow_trader = ShadowTrader(
+                evaluation_bars=shadow_cfg.evaluation_bars,
+                promotion_threshold=shadow_cfg.promotion_sharpe_delta,
+            )
+            self._gradual_rollout = GradualRollout(
+                ramp_bars=shadow_cfg.gradual_rollout_bars,
+            )
+        else:
+            self._shadow_trader: ShadowTrader | None = None
+            self._gradual_rollout: GradualRollout | None = None
+
+        # --- Phase 4C: Online Learning ---
+        self._online_learner = None
+        ol_cfg = config.training.online_learning
+        if ol_cfg.enabled:
+            try:
+                from apexfx.training.online_learner import OnlineLearner
+                self._online_learner = OnlineLearner(
+                    model_path=model_file,
+                    config=config,
+                    mode=ol_cfg.mode,
+                    retrain_window_days=ol_cfg.retrain_window_days,
+                    retrain_steps=ol_cfg.retrain_steps,
+                    retrain_lr=ol_cfg.retrain_lr,
+                    min_new_bars=ol_cfg.min_new_bars,
+                    validation_sharpe_min=ol_cfg.validation_sharpe_min,
+                )
+            except Exception as e:
+                logger.warning("Online learner init failed", error=str(e))
+
+        self._online_learning_interval_s = ol_cfg.check_interval_hours * 3600
+        self._new_bars_count = 0
+
+        # --- Phase 4C: News Sentiment ---
+        self._sentiment_extractor = None
+        try:
+            from apexfx.features.sentiment import SentimentExtractor
+            for ext in self._feature_pipeline._extractors:
+                if isinstance(ext, SentimentExtractor):
+                    self._sentiment_extractor = ext
+                    break
+        except ImportError:
+            pass
 
         # Lock to serialize bar processing (prevent race condition
         # where two H1 bars are processed in parallel)
@@ -130,11 +195,17 @@ class LiveTradingLoop:
             # Register tick callback for bar aggregation
             self._tick_collector.on_tick(self._on_new_ticks)
 
+            # Run startup stress test
+            self._risk_manager.run_startup_stress_test(self._state.state.equity)
+
             # Start concurrent tasks
             tasks = [
                 asyncio.create_task(self._tick_collector.start()),
                 asyncio.create_task(self._health_check_loop()),
                 asyncio.create_task(self._state_persist_loop()),
+                asyncio.create_task(self._calendar_update_loop()),
+                asyncio.create_task(self._online_learning_loop()),
+                asyncio.create_task(self._news_update_loop()),
             ]
 
             # Wait for shutdown
@@ -282,6 +353,16 @@ class LiveTradingLoop:
 
             signal = self._signal_gen.generate(observation)
             self._health.update_inference_latency(signal.inference_time_ms)
+            self._new_bars_count += 1
+
+            # Shadow trading: record live signal for comparison
+            if self._shadow_trader is not None:
+                self._shadow_trader.on_bar(
+                    live_action=signal.action,
+                    shadow_actions={},  # Shadow models registered externally
+                    actual_price=bar.close,
+                    live_return=0.0,
+                )
 
             # 4. Risk evaluation
             info = self._mt5.get_symbol_info(self._symbol)
@@ -516,6 +597,92 @@ class LiveTradingLoop:
         while self._running:
             self._state.persist()
             await asyncio.sleep(self._persist_interval_s)
+
+    async def _calendar_update_loop(self) -> None:
+        """Periodically fetch latest economic calendar from Forex Factory."""
+        if not self._calendar_fetcher or not self._fundamental_extractor:
+            return
+
+        while self._running:
+            try:
+                events = self._calendar_fetcher.fetch_current_week()
+                if events:
+                    self._fundamental_extractor.set_events(events)
+                    logger.info(
+                        "Calendar updated",
+                        n_events=len(events),
+                        next_high_impact=next(
+                            (
+                                f"{e.name} ({e.currency}) at {e.time_utc:%H:%M UTC}"
+                                for e in events
+                                if e.impact == "high"
+                                and e.time_utc > datetime.now(timezone.utc)
+                            ),
+                            "none",
+                        ),
+                    )
+            except Exception as e:
+                logger.error("Calendar update failed", error=str(e))
+
+            await asyncio.sleep(self._calendar_interval_s)
+
+    async def _online_learning_loop(self) -> None:
+        """Periodically check if model should be retrained on recent data."""
+        if self._online_learner is None:
+            return
+
+        while self._running:
+            try:
+                if self._online_learner.should_retrain(self._new_bars_count):
+                    logger.info(
+                        "Online learning: retraining triggered",
+                        new_bars=self._new_bars_count,
+                    )
+                    # Build recent data from bars buffer
+                    if len(self._bars_buffer) > 24:
+                        recent_data = pd.DataFrame(self._bars_buffer)
+                        result = self._online_learner.retrain(recent_data)
+                        if result.promoted:
+                            # Reload model in signal generator
+                            try:
+                                self._signal_gen = SignalGenerator(
+                                    result.model_path, device="cpu"
+                                )
+                                logger.info(
+                                    "Model updated via online learning",
+                                    sharpe_improvement=round(result.sharpe_delta, 4),
+                                )
+                            except Exception as e:
+                                logger.error("Model reload failed", error=str(e))
+                        self._new_bars_count = 0
+            except Exception as e:
+                logger.error("Online learning error", error=str(e))
+
+            await asyncio.sleep(self._online_learning_interval_s)
+
+    async def _news_update_loop(self) -> None:
+        """Periodically fetch news headlines for sentiment features."""
+        if self._sentiment_extractor is None:
+            return
+
+        while self._running:
+            try:
+                from apexfx.data.news_fetcher import NewsFetcher
+                fetcher = NewsFetcher()
+                headlines = fetcher.fetch_latest(max_items=20)
+                if headlines:
+                    self._sentiment_extractor.update_headlines(headlines)
+                    logger.debug(
+                        "Sentiment headlines updated",
+                        n_headlines=len(headlines),
+                    )
+            except ImportError:
+                logger.debug("NewsFetcher not available")
+                return  # Exit loop if module not available
+            except Exception as e:
+                logger.error("News update failed", error=str(e))
+
+            await asyncio.sleep(900)  # Every 15 minutes
 
     async def _cleanup(self) -> None:
         """Graceful cleanup on shutdown."""

@@ -73,9 +73,14 @@ class GatedResidualNetwork(nn.Module):
         # Primary path
         hidden = self.fc1(x)
 
-        # Context modulation
+        # Context modulation (auto-broadcast: 2D context → 3D hidden)
         if self.context_proj is not None and context is not None:
-            hidden = hidden + self.context_proj(context)
+            ctx = self.context_proj(context)
+            # If hidden is 3D (batch, time, d) but context is 2D (batch, d),
+            # unsqueeze to (batch, 1, d) for broadcasting across time steps
+            if hidden.dim() == 3 and ctx.dim() == 2:
+                ctx = ctx.unsqueeze(1)
+            hidden = hidden + ctx
 
         hidden = self.elu(hidden)
         hidden = self.fc2(hidden)

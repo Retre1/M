@@ -50,7 +50,12 @@ class TimeDistributed(nn.Module):
 
 
 class MLP(nn.Module):
-    """Multi-layer perceptron with configurable architecture."""
+    """Multi-layer perceptron with configurable architecture.
+
+    Supports splitting into ``encode()`` (hidden layers) and ``decode()``
+    (output head) for cross-agent attention integration.  The standard
+    ``forward()`` is equivalent to ``decode(encode(x))``.
+    """
 
     def __init__(
         self,
@@ -72,25 +77,37 @@ class MLP(nn.Module):
         }
         act_cls = activations.get(activation, nn.ReLU)
 
-        layers: list[nn.Module] = []
+        # --- Hidden layers with LayerNorm for gradient stability ---
+        hidden_layers: list[nn.Module] = []
         prev_size = input_size
-
         for h_size in hidden_sizes:
-            layers.extend([
+            hidden_layers.extend([
                 nn.Linear(prev_size, h_size),
+                nn.LayerNorm(h_size),
                 act_cls(),
                 nn.Dropout(dropout),
             ])
             prev_size = h_size
 
-        layers.append(nn.Linear(prev_size, output_size))
+        self.hidden_net = nn.Sequential(*hidden_layers)
+        self.hidden_dim: int = prev_size  # last hidden size
 
+        # --- Output head ---
+        output_layers: list[nn.Module] = [nn.Linear(prev_size, output_size)]
         if output_activation:
             out_act = activations.get(output_activation)
             if out_act:
-                layers.append(out_act())
+                output_layers.append(out_act())
 
-        self.net = nn.Sequential(*layers)
+        self.output_head = nn.Sequential(*output_layers)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x)
+        return self.output_head(self.hidden_net(x))
+
+    def encode(self, x: torch.Tensor) -> torch.Tensor:
+        """Return penultimate hidden representation ``(batch, hidden_dim)``."""
+        return self.hidden_net(x)
+
+    def decode(self, hidden: torch.Tensor) -> torch.Tensor:
+        """Map hidden representation to output ``(batch, output_size)``."""
+        return self.output_head(hidden)

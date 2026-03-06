@@ -1,4 +1,9 @@
-"""Breakout agent — trades support/resistance level breakouts with volume confirmation."""
+"""Breakout agent — trades support/resistance level breakouts with volume confirmation.
+
+Supports cross-agent attention: ``encode()`` returns a hidden representation
+that participates in multi-agent attention, then ``act()`` produces the final
+dual-gated action from the (optionally enriched) hidden.
+"""
 
 from __future__ import annotations
 
@@ -65,6 +70,73 @@ class BreakoutAgent(nn.Module):
 
         self.tanh = nn.Tanh()
 
+    # ------------------------------------------------------------------
+    # Cross-agent attention API
+    # ------------------------------------------------------------------
+
+    @property
+    def hidden_dim(self) -> int:
+        return self.feature_net.hidden_dim
+
+    def encode(
+        self,
+        tft_state: torch.Tensor,
+        breakout_features: torch.Tensor,
+    ) -> torch.Tensor:
+        """Return hidden representation *before* action head and gating.
+
+        Returns
+        -------
+        hidden : (batch, hidden_dim)
+        """
+        combined = torch.cat([tft_state, breakout_features], dim=-1)
+        return self.feature_net.encode(combined)
+
+    def act(
+        self,
+        hidden: torch.Tensor,
+        specialist_features: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Produce dual-gated action from (optionally enriched) hidden.
+
+        Parameters
+        ----------
+        hidden : (batch, hidden_dim)
+            Penultimate hidden — may be enriched by cross-agent attention.
+        specialist_features : (batch, d_breakout_features)
+            Needed for breakout/volume gates.  Falls back to ones if ``None``.
+            Expected features include bollinger_bandwidth at index 3.
+
+        Returns
+        -------
+        action : (batch, 1) in [-1, 1], gated by breakout × volume × squeeze
+        """
+        raw_action = self.tanh(self.feature_net.decode(hidden))
+
+        if specialist_features is not None:
+            breakout_confidence = self.breakout_gate(specialist_features)
+            volume_confirmation = self.volume_gate(specialist_features)
+
+            # Volatility squeeze filter: only fire breakouts after tight consolidation
+            # bollinger_bandwidth is expected at index 3 of breakout_features
+            # Low bandwidth = squeeze = breakout likely; high bandwidth = already expanded
+            squeeze_mask = torch.ones_like(breakout_confidence)
+            if specialist_features.shape[-1] > 3:
+                bandwidth = specialist_features[:, 3:4]  # bollinger_bandwidth
+                # Suppress signals when bandwidth is high (no squeeze)
+                # squeeze_mask ≈ 1 when bandwidth < threshold, ≈ 0 when bandwidth >> threshold
+                squeeze_mask = torch.sigmoid(
+                    (self.squeeze_threshold - bandwidth) * 10.0
+                )
+
+            gate = breakout_confidence * volume_confirmation * squeeze_mask
+            return raw_action * gate
+        return raw_action
+
+    # ------------------------------------------------------------------
+    # Standard forward (backward-compatible)
+    # ------------------------------------------------------------------
+
     def forward(
         self,
         tft_state: torch.Tensor,
@@ -84,18 +156,5 @@ class BreakoutAgent(nn.Module):
             action: (batch, 1) — scalar in [-1, 1], gated by breakout + volume
                 Only significant when a breakout is detected with confirmation.
         """
-        combined = torch.cat([tft_state, breakout_features], dim=-1)
-
-        # Base directional signal
-        raw_action = self.tanh(self.feature_net(combined))
-
-        # Breakout gate: is this a breakout condition?
-        breakout_confidence = self.breakout_gate(breakout_features)
-
-        # Volume gate: is there volume confirmation?
-        volume_confirmation = self.volume_gate(breakout_features)
-
-        # Combined gate: both conditions must be met
-        gate = breakout_confidence * volume_confirmation
-
-        return raw_action * gate
+        hidden = self.encode(tft_state, breakout_features)
+        return self.act(hidden, specialist_features=breakout_features)

@@ -11,6 +11,7 @@ from apexfx.data.mt5_client import MT5Client, OrderType, TradeAction, TradeReque
 from apexfx.execution.fill_tracker import FillTracker
 from apexfx.execution.liquidity_guard import LiquidityGuard
 from apexfx.execution.order_manager import OrderManager
+from apexfx.execution.smart_exec import SmartRouter
 from apexfx.risk.risk_manager import KillSwitch, MarketState, RiskDecision
 from apexfx.utils.logging import get_logger
 
@@ -51,6 +52,19 @@ class Executor:
         self.fill_tracker = FillTracker(pip_value=symbol_config.pip_value)
 
         self._kill_switch = kill_switch
+
+        # Smart order router for algorithmic execution
+        se_cfg = getattr(config, "smart_execution", None)
+        if se_cfg and se_cfg.algorithm != "direct":
+            self._smart_router = SmartRouter(
+                twap_threshold=se_cfg.twap_threshold_lots,
+                vwap_threshold=se_cfg.vwap_threshold_lots,
+                is_threshold=se_cfg.is_threshold_lots,
+            )
+            self._smart_urgency = se_cfg.urgency
+        else:
+            self._smart_router: SmartRouter | None = None
+            self._smart_urgency = 0.5
 
         self._current_position_ticket: int | None = None
         self._current_position_direction: int = 0

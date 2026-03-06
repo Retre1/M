@@ -99,3 +99,137 @@ class VaRCalculator:
         z_alpha = stats.norm.ppf(self._confidence)
         var_return = -(mu - z_alpha * sigma)
         return max(var_return, 0)
+
+    # ------------------------------------------------------------------
+    # Portfolio-level VaR (multi-asset)
+    # ------------------------------------------------------------------
+
+    def compute_portfolio_var(
+        self,
+        positions: dict[str, float],
+        correlation_matrix: np.ndarray,
+        individual_vars: dict[str, float],
+    ) -> float:
+        """Portfolio VaR using variance-covariance method with correlations.
+
+        VaR_portfolio = sqrt(w' * Sigma * w) where Sigma is the VaR-covariance
+        matrix constructed from individual VaRs and their correlations.
+
+        Args:
+            positions: {symbol: notional_value} for each asset.
+            correlation_matrix: NxN correlation matrix (same order as positions keys).
+            individual_vars: {symbol: var_fraction} individual asset VaRs.
+
+        Returns:
+            Portfolio VaR as a fraction of total portfolio value.
+        """
+        symbols = list(positions.keys())
+        n = len(symbols)
+        if n == 0:
+            return 0.0
+        if n == 1:
+            sym = symbols[0]
+            return individual_vars.get(sym, 0.0)
+
+        total_value = sum(abs(v) for v in positions.values())
+        if total_value < 1e-10:
+            return 0.0
+
+        # Weight vector (fraction of total exposure)
+        weights = np.array([positions[s] / total_value for s in symbols])
+
+        # VaR vector
+        var_vec = np.array([individual_vars.get(s, 0.0) for s in symbols])
+
+        # Construct VaR-covariance matrix: Sigma_ij = VaR_i * VaR_j * rho_ij
+        corr = np.asarray(correlation_matrix)
+        if corr.shape != (n, n):
+            raise ValueError(
+                f"correlation_matrix shape {corr.shape} != ({n}, {n})"
+            )
+
+        var_cov = np.outer(var_vec, var_vec) * corr
+
+        # Portfolio VaR = sqrt(w' * Sigma * w)
+        portfolio_var_sq = float(weights @ var_cov @ weights)
+        return float(np.sqrt(max(portfolio_var_sq, 0.0)))
+
+    def compute_component_var(
+        self,
+        positions: dict[str, float],
+        correlation_matrix: np.ndarray,
+        individual_vars: dict[str, float],
+    ) -> dict[str, float]:
+        """Component VaR: each asset's contribution to portfolio VaR.
+
+        Component VaR_i = w_i * (Sigma * w)_i / VaR_portfolio
+        Sum of component VaRs = portfolio VaR (additive decomposition).
+
+        Returns:
+            {symbol: component_var_fraction} for each asset.
+        """
+        symbols = list(positions.keys())
+        n = len(symbols)
+        if n == 0:
+            return {}
+
+        total_value = sum(abs(v) for v in positions.values())
+        if total_value < 1e-10:
+            return {s: 0.0 for s in symbols}
+
+        weights = np.array([positions[s] / total_value for s in symbols])
+        var_vec = np.array([individual_vars.get(s, 0.0) for s in symbols])
+        corr = np.asarray(correlation_matrix)
+        var_cov = np.outer(var_vec, var_vec) * corr
+
+        portfolio_var = self.compute_portfolio_var(
+            positions, correlation_matrix, individual_vars
+        )
+        if portfolio_var < 1e-10:
+            return {s: 0.0 for s in symbols}
+
+        # Component VaR_i = w_i * (Sigma @ w)_i / portfolio_var
+        marginal = var_cov @ weights
+        components = weights * marginal / portfolio_var
+
+        return {s: float(components[i]) for i, s in enumerate(symbols)}
+
+    def compute_marginal_var(
+        self,
+        new_position: str,
+        new_value: float,
+        existing_positions: dict[str, float],
+        correlation_matrix: np.ndarray,
+        individual_vars: dict[str, float],
+    ) -> float:
+        """Marginal VaR: how much portfolio VaR increases by adding a new position.
+
+        Returns:
+            Delta VaR (positive = increases risk, negative = diversification benefit).
+        """
+        # VaR without new position
+        var_before = self.compute_portfolio_var(
+            existing_positions, correlation_matrix, individual_vars
+        )
+
+        # VaR with new position
+        combined = dict(existing_positions)
+        combined[new_position] = combined.get(new_position, 0.0) + new_value
+
+        # Expand correlation matrix if needed
+        symbols_before = list(existing_positions.keys())
+        symbols_after = list(combined.keys())
+
+        if len(symbols_after) > len(symbols_before):
+            # New asset not in existing matrix — assume zero correlation (conservative)
+            n_old = len(symbols_before)
+            n_new = len(symbols_after)
+            new_corr = np.eye(n_new)
+            new_corr[:n_old, :n_old] = correlation_matrix
+            var_after = self.compute_portfolio_var(combined, new_corr, individual_vars)
+        else:
+            var_after = self.compute_portfolio_var(
+                combined, correlation_matrix, individual_vars
+            )
+
+        return var_after - var_before

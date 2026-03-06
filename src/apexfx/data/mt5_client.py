@@ -307,6 +307,48 @@ class MT5Client:
             for p in positions
         ]
 
+    def get_order_book(self, symbol: str, depth: int = 10) -> dict:
+        """Get L2 order book (Depth of Market) from MT5.
+
+        Args:
+            symbol: Instrument symbol.
+            depth: Number of price levels on each side.
+
+        Returns:
+            Dictionary with 'bids' and 'asks', each a list of
+            {'price': float, 'volume': float} entries.
+        """
+        self._ensure_connected()
+        try:
+            # Enable book subscription for this symbol
+            self._mt5.market_book_add(symbol)
+            book = self._mt5.market_book_get(symbol)
+            if book is None:
+                return {"bids": [], "asks": []}
+
+            bids = []
+            asks = []
+            for entry in book:
+                item = {"price": entry.price, "volume": float(entry.volume)}
+                if entry.type == 1:  # BOOK_TYPE_SELL
+                    asks.append(item)
+                else:  # BOOK_TYPE_BUY
+                    bids.append(item)
+
+            # Limit to requested depth
+            bids = sorted(bids, key=lambda x: -x["price"])[:depth]
+            asks = sorted(asks, key=lambda x: x["price"])[:depth]
+
+            return {"bids": bids, "asks": asks}
+        except Exception as e:
+            logger.warning("Order book fetch failed", symbol=symbol, error=str(e))
+            return {"bids": [], "asks": []}
+        finally:
+            try:
+                self._mt5.market_book_release(symbol)
+            except Exception:
+                pass
+
     def close_position(self, ticket: int) -> TradeResult:
         """Close a position by ticket."""
         self._ensure_connected()

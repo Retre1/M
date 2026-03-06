@@ -1,4 +1,9 @@
-"""Mean-reversion agent for Z-Score anomaly detection entries."""
+"""Mean-reversion agent for Z-Score anomaly detection entries.
+
+Supports cross-agent attention: ``encode()`` returns a hidden representation
+that participates in multi-agent attention, then ``act()`` produces the final
+gated action from the (optionally enriched) hidden.
+"""
 
 from __future__ import annotations
 
@@ -47,6 +52,61 @@ class ReversionAgent(nn.Module):
 
         self.tanh = nn.Tanh()
 
+    # ------------------------------------------------------------------
+    # Cross-agent attention API
+    # ------------------------------------------------------------------
+
+    @property
+    def hidden_dim(self) -> int:
+        return self.feature_net.hidden_dim
+
+    def encode(
+        self,
+        tft_state: torch.Tensor,
+        reversion_features: torch.Tensor,
+    ) -> torch.Tensor:
+        """Return hidden representation *before* action head and gating.
+
+        Returns
+        -------
+        hidden : (batch, hidden_dim)
+        """
+        # Clip z_score (index 0) to prevent gradient explosion from extreme values
+        reversion_features = reversion_features.clone()
+        reversion_features[:, 0] = reversion_features[:, 0].clamp(-5.0, 5.0)
+
+        combined = torch.cat([tft_state, reversion_features], dim=-1)
+        return self.feature_net.encode(combined)
+
+    def act(
+        self,
+        hidden: torch.Tensor,
+        specialist_features: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Produce gated action from (optionally enriched) hidden.
+
+        Parameters
+        ----------
+        hidden : (batch, hidden_dim)
+            Penultimate hidden — may be enriched by cross-agent attention.
+        specialist_features : (batch, d_reversion_features)
+            Needed for the confidence gate.  Falls back to ones if ``None``.
+
+        Returns
+        -------
+        action : (batch, 1) in [-1, 1], gated by confidence
+        """
+        raw_action = self.tanh(self.feature_net.decode(hidden))
+
+        if specialist_features is not None:
+            confidence = self.confidence_gate(specialist_features)
+            return raw_action * confidence
+        return raw_action
+
+    # ------------------------------------------------------------------
+    # Standard forward (backward-compatible)
+    # ------------------------------------------------------------------
+
     def forward(
         self,
         tft_state: torch.Tensor,
@@ -64,13 +124,5 @@ class ReversionAgent(nn.Module):
                 Near 0 when Z-Score is in normal range.
                 Significant magnitude only during anomalous conditions.
         """
-        combined = torch.cat([tft_state, reversion_features], dim=-1)
-
-        # Base action
-        raw_action = self.tanh(self.feature_net(combined))
-
-        # Confidence gate: suppresses output when conditions aren't anomalous
-        confidence = self.confidence_gate(reversion_features)
-
-        # Gated output: agent only contributes when confident
-        return raw_action * confidence
+        hidden = self.encode(tft_state, reversion_features)
+        return self.act(hidden, specialist_features=reversion_features)
