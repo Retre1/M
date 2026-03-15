@@ -54,6 +54,14 @@ class RiskDecision:
     var_scale: float = 1.0  # scaling applied to position (not action)
 
 
+@dataclass
+class DynamicStopConfig:
+    """Dynamic stop-loss parameters based on regime and uncertainty."""
+    atr_mult: float            # ATR multiplier for stop distance
+    trailing: bool             # Use trailing stop (trends only)
+    stop_distance: float | None = None  # Absolute stop distance (atr_mult * ATR)
+
+
 class DailyLossGuard:
     """Hard daily loss limit — stops all trading when daily loss exceeds threshold."""
 
@@ -379,8 +387,17 @@ class RiskManager:
         # Last observation for strategy filter evaluation
         self._last_obs: dict | None = None
 
+        # Portfolio context for multi-symbol trading
+        self._portfolio_positions: list | None = None
+        self._portfolio_max_total_exposure: float = 0.40
+        self._portfolio_max_per_symbol: float = 0.25
+
         self._portfolio_value = initial_balance
         self._initial_balance = initial_balance
+
+        # Per-symbol return tracking for Portfolio VaR
+        self._symbol_returns: dict[str, list[float]] = {}
+        self._symbol_returns_lookback: int = 60
 
     def update_portfolio(self, portfolio_value: float) -> None:
         """Update portfolio value for all risk components."""
@@ -394,6 +411,28 @@ class RiskManager:
         """Update VaR calculator and vol targeter with daily return."""
         self.var_calc.update(daily_return)
         self.vol_targeter.update(daily_return)
+
+    def record_symbol_return(self, symbol: str, daily_return: float) -> None:
+        """Record a per-symbol daily return for Portfolio VaR calculation."""
+        if symbol not in self._symbol_returns:
+            self._symbol_returns[symbol] = []
+        self._symbol_returns[symbol].append(daily_return)
+        # Truncate to lookback
+        if len(self._symbol_returns[symbol]) > self._symbol_returns_lookback * 2:
+            self._symbol_returns[symbol] = self._symbol_returns[symbol][-self._symbol_returns_lookback:]
+
+    def _compute_symbol_vol(self, symbol: str) -> float:
+        """Compute realized daily volatility for a symbol.
+
+        Returns config default if insufficient data.
+        """
+        import numpy as _np
+        returns = self._symbol_returns.get(symbol, [])
+        if len(returns) >= 10:
+            return float(_np.std(returns, ddof=1))
+        # Fallback: use config default
+        pvar_cfg = getattr(self._config, "portfolio_var", None)
+        return getattr(pvar_cfg, "default_symbol_vol", 0.01) if pvar_cfg else 0.01
 
     def record_trade(self, pnl: float, trade_return: float | None = None) -> None:
         """Record a closed trade for cooldown and Kelly tracking.
@@ -569,11 +608,82 @@ class RiskManager:
             checks_passed.append("var_insufficient_data")
 
         # --- Check 4b: Portfolio VaR (multi-asset) ---
+        # Uses variance-covariance method: VaR_p = sqrt(w' × Σ × w) where
+        # Σ_ij = VaR_i × VaR_j × ρ_ij, with dynamic correlations from
+        # DynamicCorrelationTracker and realized per-symbol volatility.
         pvar_cfg = getattr(self._config, "portfolio_var", None)
-        if pvar_cfg and pvar_cfg.multi_asset and self.var_calc.has_sufficient_data:
-            # Multi-asset portfolio VaR check — placeholder for when
-            # multi-asset positions are provided externally
-            checks_passed.append("portfolio_var_ok")
+        if (
+            pvar_cfg
+            and pvar_cfg.multi_asset
+            and self._portfolio_positions
+        ):
+            try:
+                import numpy as _np
+                from scipy import stats as _stats
+
+                positions = self._portfolio_positions
+                total_notional = sum(abs(p.notional) for p in positions)
+
+                if total_notional > 0 and len(positions) >= 2:
+                    pos_dict = {p.symbol: p.notional for p in positions}
+                    symbols = list(pos_dict.keys())
+                    n = len(symbols)
+
+                    # 1. Build correlation matrix using DynamicCorrelationTracker
+                    corr_matrix = _np.eye(n)
+                    try:
+                        from apexfx.live.portfolio_manager import get_correlation_tracker
+                        tracker = get_correlation_tracker()
+                    except ImportError:
+                        tracker = None
+
+                    for i in range(n):
+                        for j in range(i + 1, n):
+                            if tracker is not None:
+                                rho = tracker.get_correlation(symbols[i], symbols[j])
+                            else:
+                                rho = 0.30  # Conservative default
+                            corr_matrix[i, j] = rho
+                            corr_matrix[j, i] = rho
+
+                    # 2. Individual VaR per position using realized volatility
+                    z_alpha = _stats.norm.ppf(self.var_calc._confidence)
+                    ind_vars = {}
+                    for p in positions:
+                        vol = self._compute_symbol_vol(p.symbol)
+                        # VaR_i = |notional| × σ_daily × z_α
+                        ind_vars[p.symbol] = abs(p.notional) * vol * z_alpha
+
+                    # 3. Compute portfolio VaR via variance-covariance
+                    portfolio_var = self.var_calc.compute_portfolio_var(
+                        pos_dict, corr_matrix, ind_vars,
+                    )
+
+                    pvar_limit = pvar_cfg.daily_limit * self._portfolio_value
+
+                    logger.debug(
+                        "Portfolio VaR computed",
+                        portfolio_var=f"{portfolio_var:.2f}",
+                        pvar_limit=f"{pvar_limit:.2f}",
+                        n_positions=n,
+                        symbols=symbols,
+                    )
+
+                    if portfolio_var > pvar_limit:
+                        pvar_scale = pvar_limit / (portfolio_var + 1e-10)
+                        var_scale *= min(pvar_scale, 1.0)
+                        checks_passed.append(
+                            f"portfolio_var_scaled (pVaR={portfolio_var:.0f}, limit={pvar_limit:.0f})"
+                        )
+                    else:
+                        checks_passed.append("portfolio_var_ok")
+                else:
+                    checks_passed.append("portfolio_var_single_position")
+            except Exception as e:
+                logger.debug("Portfolio VaR calculation failed", error=str(e))
+                checks_passed.append("portfolio_var_fallback")
+        elif pvar_cfg and pvar_cfg.multi_asset:
+            checks_passed.append("portfolio_var_no_positions")
 
         # --- Check 4c: Volatility targeting ---
         vol_leverage = self.vol_targeter.compute_leverage()
@@ -593,7 +703,27 @@ class RiskManager:
         else:
             checks_passed.append(f"regime_ok ({self.regime_risk.current_regime})")
 
-        # --- Check 4e: Uncertainty-based scaling ---
+        # --- Check 4e: Portfolio concentration (multi-symbol) ---
+        if self._portfolio_positions:
+            total_exposure = sum(abs(p.notional) for p in self._portfolio_positions)
+            exposure_ratio = total_exposure / self._portfolio_value if self._portfolio_value > 0 else 0.0
+            if exposure_ratio > self._portfolio_max_total_exposure:
+                checks_failed.append(
+                    f"portfolio_exposure ({exposure_ratio:.1%} > {self._portfolio_max_total_exposure:.1%})"
+                )
+                return RiskDecision(
+                    approved=False,
+                    adjusted_action=0.0,
+                    position_size=0.0,
+                    reason=f"Portfolio exposure limit: {exposure_ratio:.1%}",
+                    checks_passed=checks_passed,
+                    checks_failed=checks_failed,
+                )
+            checks_passed.append(f"portfolio_exposure_ok ({exposure_ratio:.1%})")
+        else:
+            checks_passed.append("portfolio_n/a")
+
+        # --- Check 4f: Uncertainty-based scaling ---
         if uncertainty_score is not None and uncertainty_score > 0:
             unc_scale = max(
                 self._uncertainty_min_scale,
@@ -684,6 +814,40 @@ class RiskManager:
     def set_regime(self, regime: str) -> None:
         """Update the current market regime for adaptive risk."""
         self.regime_risk.set_regime(regime)
+
+    def set_portfolio_context(self, open_positions: list) -> None:
+        """Inject cross-pair context for portfolio-aware risk checks.
+
+        Args:
+            open_positions: List of PositionInfo from PortfolioManager.
+        """
+        self._portfolio_positions = open_positions
+
+    def compute_dynamic_stop(
+        self,
+        uncertainty_score: float,
+        regime: str,
+        current_atr: float | None,
+    ) -> DynamicStopConfig:
+        """Compute regime-aware dynamic stop-loss parameters.
+
+        Wider stops in volatile/uncertain conditions, tighter in trends.
+        Trailing stops only enabled in trending regimes.
+        """
+        base_mult = {
+            "trending": 2.0,
+            "mean_reverting": 3.0,
+            "volatile": 4.0,
+            "flat": 2.5,
+        }
+        mult = base_mult.get(regime, 2.5) * (1.0 + 0.5 * uncertainty_score)
+        trailing = regime == "trending"
+        stop_distance = mult * current_atr if current_atr is not None else None
+        return DynamicStopConfig(
+            atr_mult=mult,
+            trailing=trailing,
+            stop_distance=stop_distance,
+        )
 
     def force_close_all(self) -> bool:
         """Signal that all positions should be force-closed."""

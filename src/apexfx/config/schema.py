@@ -71,7 +71,7 @@ class SymbolConfig(BaseModel):
 
 class SymbolsConfig(BaseModel):
     symbols: dict[str, SymbolConfig]
-    intermarket: list[str] = Field(default_factory=lambda: ["DXY", "XAUUSD", "US10Y"])
+    intermarket: list[str] = Field(default_factory=lambda: ["DXY", "XAUUSD", "US10Y", "SPX"])
 
 
 # --- Data ---
@@ -101,6 +101,38 @@ class CalendarConfig(BaseModel):
     source: str = "forex_factory"
 
 
+class NewsConfig(BaseModel):
+    """Real-time news configuration for fastest possible reaction.
+
+    Priority chain: WebSocket (Finnhub, ~1s) → Fast RSS polling (30s) → Standard RSS (15m).
+    """
+    enabled: bool = True
+    # --- Finnhub WebSocket (primary, fastest ~1s latency) ---
+    finnhub_enabled: bool = True
+    finnhub_api_key: str = ""  # env: FINNHUB_API_KEY
+    finnhub_categories: list[str] = Field(
+        default_factory=lambda: ["forex", "general", "merger"]
+    )
+    # --- Fast RSS polling (fallback, ~30s latency) ---
+    rss_enabled: bool = True
+    rss_poll_interval_s: int = 30
+    rss_feeds: list[str] = Field(default_factory=lambda: [
+        "https://www.forexlive.com/feed/news",
+        "https://www.fxstreet.com/rss/news",
+        "https://www.dailyfx.com/feeds/market-news",
+    ])
+    # --- Deduplication ---
+    dedup_window_minutes: int = 60
+    max_headlines_buffer: int = 50
+    # --- Urgency detection (flash crash / breaking news) ---
+    urgency_keywords: list[str] = Field(default_factory=lambda: [
+        "breaking", "flash", "crash", "emergency", "surprise",
+        "shock", "unexpected", "war", "attack", "default",
+        "intervention", "halt", "circuit breaker",
+    ])
+    urgency_cooldown_s: int = 5
+
+
 class DataConfig(BaseModel):
     timeframes: list[str] = Field(default_factory=lambda: ["M1", "M5", "H1", "D1"])
     lookback_bars: int = 500
@@ -110,6 +142,7 @@ class DataConfig(BaseModel):
     storage: StorageConfig = Field(default_factory=StorageConfig)
     collection: CollectionConfig = Field(default_factory=CollectionConfig)
     calendar: CalendarConfig = Field(default_factory=CalendarConfig)
+    news: NewsConfig = Field(default_factory=NewsConfig)
 
 
 # --- Model ---
@@ -333,7 +366,7 @@ class TemporalCommitmentConfig(BaseModel):
 
 
 class OnlineLearningConfig(BaseModel):
-    """Adaptive online learning (retraining on recent data)."""
+    """Adaptive online learning (retraining on recent data + live micro-updates)."""
     enabled: bool = False
     mode: Literal["fine_tune", "buffer_update"] = "fine_tune"
     retrain_window_days: int = 30
@@ -342,6 +375,17 @@ class OnlineLearningConfig(BaseModel):
     min_new_bars: int = 24     # Minimum bars before considering retrain
     validation_sharpe_min: float = 0.0  # Reject if new model is worse
     check_interval_hours: int = 1
+    # Live micro-update fields
+    mini_buffer_size: int = 500
+    update_every_n_trades: int = 10
+    gradient_steps: int = 3
+    lr_scale: float = 0.1
+    ewc_enabled: bool = True
+    drift_detection_window: int = 50
+    drift_threshold_sharpe: float = -0.5
+    adaptation_gradient_steps: int = 10
+    adaptation_lr_scale: float = 0.5
+    max_rollback_checkpoints: int = 3
 
 
 class ShadowTradingConfig(BaseModel):
@@ -350,6 +394,30 @@ class ShadowTradingConfig(BaseModel):
     evaluation_bars: int = 500
     promotion_sharpe_delta: float = 0.3  # Shadow must beat live by this delta
     gradual_rollout_bars: int = 200      # Bars for gradual 0→100% rollout
+
+
+class PERConfig(BaseModel):
+    """Prioritized Experience Replay configuration."""
+    enabled: bool = True
+    alpha: float = 0.6              # Prioritization exponent
+    beta_start: float = 0.4         # Importance sampling weight start
+    beta_end: float = 1.0           # IS weight end
+    beta_annealing_steps: int = 0   # 0 = auto (sum of stage timesteps)
+    epsilon: float = 1e-6           # Small constant for priority
+    update_freq: int = 100          # Update priorities every N gradient steps
+
+
+class AugmentationConfig(BaseModel):
+    """Advanced time-series augmentation for training generalization."""
+    enabled: bool = True
+    time_warp_prob: float = 0.3
+    time_warp_sigma: float = 0.2
+    magnitude_warp_prob: float = 0.3
+    magnitude_warp_sigma: float = 0.1
+    window_slice_prob: float = 0.2
+    window_slice_ratio: float = 0.9    # Keep 90% of points
+    mixup_prob: float = 0.2
+    mixup_alpha: float = 0.2           # Beta distribution parameter
 
 
 class TrainingConfig(BaseModel):
@@ -364,6 +432,8 @@ class TrainingConfig(BaseModel):
     temporal_commitment: TemporalCommitmentConfig = Field(default_factory=TemporalCommitmentConfig)
     online_learning: OnlineLearningConfig = Field(default_factory=OnlineLearningConfig)
     shadow_trading: ShadowTradingConfig = Field(default_factory=ShadowTradingConfig)
+    per: PERConfig = Field(default_factory=PERConfig)
+    augmentation: AugmentationConfig = Field(default_factory=AugmentationConfig)
 
 
 # --- Risk ---
@@ -407,8 +477,10 @@ class StrategyFilterConfig(BaseModel):
 class PortfolioVaRConfig(BaseModel):
     """Portfolio-level VaR configuration for multi-asset risk."""
     multi_asset: bool = False
+    daily_limit: float = 0.02  # Max portfolio VaR as fraction of equity (2%)
     correlation_lookback_days: int = 60
     use_cvar: bool = True  # Use CVaR (Expected Shortfall) instead of VaR
+    default_symbol_vol: float = 0.01  # Default daily vol if no return data (1%)
 
 
 class StressTestConfig(BaseModel):
@@ -484,7 +556,32 @@ class ExecutionConfig(BaseModel):
     smart_execution: SmartExecutionConfig = Field(default_factory=SmartExecutionConfig)
 
 
+class PortfolioConfig(BaseModel):
+    """Multi-symbol portfolio trading configuration."""
+    enabled: bool = False
+    symbols: list[str] = Field(default_factory=lambda: ["EURUSD"])
+    max_total_exposure: float = 0.40     # Max % of equity in all positions
+    max_per_symbol: float = 0.25         # Max % of equity per symbol
+    correlation_limit: float = 0.70      # Block trades with corr > this
+    rebalance_freq_bars: int = 24
+
+
 # --- Dashboard ---
+
+
+class AlertConfig(BaseModel):
+    """Alert/notification configuration for Telegram, Webhook, etc."""
+    enabled: bool = False  # Off by default — requires setup
+    min_level: str = "WARNING"  # INFO, WARNING, CRITICAL, EMERGENCY
+    cooldown_s: float = 60.0
+    # Telegram
+    telegram_enabled: bool = False
+    telegram_bot_token: str = ""  # env: TELEGRAM_BOT_TOKEN
+    telegram_chat_id: str = ""    # env: TELEGRAM_CHAT_ID
+    # Webhook (Slack, Discord, PagerDuty, etc.)
+    webhook_enabled: bool = False
+    webhook_url: str = ""         # env: ALERT_WEBHOOK_URL
+    webhook_format: str = "json"  # json, slack, discord
 
 
 class DashboardConfig(BaseModel):
@@ -513,4 +610,5 @@ class AppConfig(BaseModel):
     training: TrainingConfig = Field(default_factory=TrainingConfig)
     risk: RiskConfig = Field(default_factory=RiskConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
+    alerts: AlertConfig = Field(default_factory=AlertConfig)
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)

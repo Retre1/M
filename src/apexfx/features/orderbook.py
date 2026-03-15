@@ -53,7 +53,7 @@ class OrderBookExtractor(BaseFeatureExtractor):
             "trade_flow_toxicity",   # VPIN-like flow toxicity measure
         ]
 
-    def extract(self, data: pd.DataFrame) -> pd.DataFrame:
+    def extract(self, data: pd.DataFrame, ticks: pd.DataFrame | None = None) -> pd.DataFrame:
         """Extract from OHLCV data (synthetic L2 estimation for backtesting).
 
         Uses established microstructure proxies:

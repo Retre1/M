@@ -1,0 +1,760 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ApexFX Quantum — Project Architecture</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --card: #161b22;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --text-muted: #8b949e;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --orange: #d29922;
+    --red: #f85149;
+    --purple: #bc8cff;
+    --cyan: #39d2c0;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+  }
+  .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+
+  /* Header */
+  header {
+    text-align: center;
+    padding: 40px 20px 20px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 30px;
+  }
+  header h1 { font-size: 2.4em; color: var(--accent); margin-bottom: 8px; }
+  header .subtitle { color: var(--text-muted); font-size: 1.1em; }
+  .badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 0.75em;
+    font-weight: 600;
+    margin: 4px;
+  }
+  .badge-green { background: rgba(63,185,80,0.15); color: var(--green); border: 1px solid var(--green); }
+  .badge-orange { background: rgba(210,153,34,0.15); color: var(--orange); border: 1px solid var(--orange); }
+  .badge-purple { background: rgba(188,140,255,0.15); color: var(--purple); border: 1px solid var(--purple); }
+  .badge-blue { background: rgba(88,166,255,0.15); color: var(--accent); border: 1px solid var(--accent); }
+
+  /* Tab Navigation */
+  .tabs {
+    display: flex;
+    gap: 4px;
+    border-bottom: 2px solid var(--border);
+    margin-bottom: 24px;
+    overflow-x: auto;
+  }
+  .tab-btn {
+    padding: 10px 20px;
+    background: transparent;
+    color: var(--text-muted);
+    border: none;
+    cursor: pointer;
+    font-size: 0.95em;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s;
+    white-space: nowrap;
+  }
+  .tab-btn:hover { color: var(--text); }
+  .tab-btn.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+    font-weight: 600;
+  }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  /* Cards */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  .card h3 { color: var(--accent); margin-bottom: 12px; font-size: 1.1em; }
+  .card h4 { color: var(--text); margin-bottom: 8px; }
+
+  /* Grid Layouts */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+  .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+  @media (max-width: 900px) {
+    .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+  }
+
+  /* KPI Cards */
+  .kpi { text-align: center; padding: 20px; }
+  .kpi .value { font-size: 2.2em; font-weight: 700; color: var(--accent); }
+  .kpi .label { font-size: 0.85em; color: var(--text-muted); margin-top: 4px; }
+
+  /* Pipeline Flow */
+  .pipeline-flow {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    overflow-x: auto;
+    padding: 20px 0;
+  }
+  .pipeline-step {
+    flex: 0 0 auto;
+    background: var(--card);
+    border: 2px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 20px;
+    text-align: center;
+    min-width: 140px;
+    transition: border-color 0.2s;
+  }
+  .pipeline-step:hover { border-color: var(--accent); }
+  .pipeline-step .step-icon { font-size: 2em; margin-bottom: 8px; }
+  .pipeline-step .step-name { font-weight: 600; font-size: 0.9em; }
+  .pipeline-step .step-detail { font-size: 0.75em; color: var(--text-muted); margin-top: 4px; }
+  .pipeline-arrow {
+    flex: 0 0 auto;
+    font-size: 1.5em;
+    color: var(--accent);
+    padding: 0 8px;
+  }
+
+  /* Feature Table */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9em;
+  }
+  th, td {
+    padding: 10px 14px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  th {
+    background: rgba(88,166,255,0.08);
+    color: var(--accent);
+    font-weight: 600;
+  }
+  tr:hover { background: rgba(88,166,255,0.04); }
+
+  /* Module List */
+  .module-list { list-style: none; }
+  .module-list li {
+    padding: 8px 12px;
+    border-left: 3px solid var(--border);
+    margin-bottom: 6px;
+    font-size: 0.9em;
+  }
+  .module-list li:hover { border-left-color: var(--accent); background: rgba(88,166,255,0.04); }
+  .module-list .mod-name { font-weight: 600; color: var(--text); }
+  .module-list .mod-desc { color: var(--text-muted); font-size: 0.85em; }
+
+  /* Risk checks */
+  .risk-gate {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    border-radius: 6px;
+    margin-bottom: 6px;
+    background: rgba(0,0,0,0.2);
+  }
+  .risk-gate .gate-icon { font-size: 1.4em; }
+  .risk-gate .gate-name { font-weight: 600; }
+  .risk-gate .gate-desc { font-size: 0.8em; color: var(--text-muted); }
+  .risk-hard { border-left: 3px solid var(--red); }
+  .risk-scale { border-left: 3px solid var(--orange); }
+
+  /* Progress bars */
+  .progress-bar {
+    height: 8px;
+    background: var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+    margin: 6px 0;
+  }
+  .progress-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.3s;
+  }
+
+  /* Agent cards */
+  .agent-card {
+    text-align: center;
+    padding: 20px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--card);
+  }
+  .agent-icon { font-size: 2.5em; margin-bottom: 10px; }
+
+  /* Mermaid-style diagram */
+  .arch-diagram {
+    background: rgba(0,0,0,0.3);
+    border-radius: 8px;
+    padding: 24px;
+    font-family: 'Courier New', monospace;
+    font-size: 0.8em;
+    overflow-x: auto;
+    white-space: pre;
+    line-height: 1.4;
+    color: var(--text-muted);
+  }
+  .arch-diagram .hl { color: var(--accent); font-weight: bold; }
+  .arch-diagram .gr { color: var(--green); }
+  .arch-diagram .or { color: var(--orange); }
+  .arch-diagram .rd { color: var(--red); }
+  .arch-diagram .cy { color: var(--cyan); }
+  .arch-diagram .pu { color: var(--purple); }
+
+  /* Phase timeline */
+  .timeline {
+    position: relative;
+    padding-left: 30px;
+  }
+  .timeline::before {
+    content: '';
+    position: absolute;
+    left: 12px;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--border);
+  }
+  .timeline-item {
+    position: relative;
+    margin-bottom: 20px;
+    padding-left: 20px;
+  }
+  .timeline-item::before {
+    content: '';
+    position: absolute;
+    left: -22px;
+    top: 8px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 2px solid var(--accent);
+    background: var(--bg);
+  }
+  .timeline-item.done::before { background: var(--green); border-color: var(--green); }
+  .timeline-item.current::before { background: var(--orange); border-color: var(--orange); }
+  .timeline-item h4 { margin-bottom: 4px; }
+  .timeline-item p { color: var(--text-muted); font-size: 0.85em; }
+
+  .search-box {
+    width: 100%;
+    padding: 10px 14px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 0.9em;
+    margin-bottom: 16px;
+  }
+  .search-box:focus { outline: none; border-color: var(--accent); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>ApexFX Quantum</h1>
+  <div class="subtitle">Institutional-Grade Forex Trading System — RL + HiveMind Multi-Agent Ensemble</div>
+  <div style="margin-top: 12px;">
+    <span class="badge badge-green">Phase 7 Complete</span>
+    <span class="badge badge-blue">SAC/TQC RL</span>
+    <span class="badge badge-purple">HiveMind 3-Agent</span>
+    <span class="badge badge-orange">120+ Features</span>
+  </div>
+</header>
+
+<div class="container">
+
+<!-- Tabs -->
+<div class="tabs">
+  <button class="tab-btn active" onclick="showTab('overview')">Overview</button>
+  <button class="tab-btn" onclick="showTab('architecture')">Architecture</button>
+  <button class="tab-btn" onclick="showTab('features')">Features (120+)</button>
+  <button class="tab-btn" onclick="showTab('risk')">Risk System</button>
+  <button class="tab-btn" onclick="showTab('agents')">HiveMind Agents</button>
+  <button class="tab-btn" onclick="showTab('roadmap')">Roadmap</button>
+  <button class="tab-btn" onclick="showTab('tests')">Tests</button>
+</div>
+
+<!-- ===== OVERVIEW TAB ===== -->
+<div id="tab-overview" class="tab-content active">
+  <div class="grid-4">
+    <div class="card kpi"><div class="value">14</div><div class="label">Feature Extractors</div></div>
+    <div class="card kpi"><div class="value">120+</div><div class="label">Total Features</div></div>
+    <div class="card kpi"><div class="value">10</div><div class="label">Risk Gates</div></div>
+    <div class="card kpi"><div class="value">284</div><div class="label">Tests Passing</div></div>
+  </div>
+
+  <div class="card">
+    <h3>Trading Pipeline Flow</h3>
+    <div class="pipeline-flow">
+      <div class="pipeline-step">
+        <div class="step-icon">📡</div>
+        <div class="step-name">MT5 Data</div>
+        <div class="step-detail">Ticks + OHLCV</div>
+      </div>
+      <div class="pipeline-arrow">→</div>
+      <div class="pipeline-step">
+        <div class="step-icon">📰</div>
+        <div class="step-name">News Stream</div>
+        <div class="step-detail">Finnhub WS + RSS</div>
+      </div>
+      <div class="pipeline-arrow">→</div>
+      <div class="pipeline-step">
+        <div class="step-icon">🔧</div>
+        <div class="step-name">Features</div>
+        <div class="step-detail">14 extractors, 120+ features</div>
+      </div>
+      <div class="pipeline-arrow">→</div>
+      <div class="pipeline-step">
+        <div class="step-icon">🧠</div>
+        <div class="step-name">HiveMind</div>
+        <div class="step-detail">3 RL Agents + Gating</div>
+      </div>
+      <div class="pipeline-arrow">→</div>
+      <div class="pipeline-step">
+        <div class="step-icon">🛡️</div>
+        <div class="step-name">Risk Manager</div>
+        <div class="step-detail">10 sequential gates</div>
+      </div>
+      <div class="pipeline-arrow">→</div>
+      <div class="pipeline-step">
+        <div class="step-icon">⚡</div>
+        <div class="step-name">Executor</div>
+        <div class="step-detail">TWAP/VWAP/IS</div>
+      </div>
+      <div class="pipeline-arrow">→</div>
+      <div class="pipeline-step">
+        <div class="step-icon">📊</div>
+        <div class="step-name">Dashboard</div>
+        <div class="step-detail">Plotly + Dash</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <h3>Core Technology Stack</h3>
+      <ul class="module-list">
+        <li><span class="mod-name">RL Engine</span><br><span class="mod-desc">SAC/TQC with Prioritized Experience Replay, Curriculum Learning</span></li>
+        <li><span class="mod-name">Feature Backbone</span><br><span class="mod-desc">TFT (Temporal Fusion Transformer) attention + 14 specialized extractors</span></li>
+        <li><span class="mod-name">Multi-Timeframe</span><br><span class="mod-desc">D1 + H1 + M5 context injection via MTF Aligner</span></li>
+        <li><span class="mod-name">News Intelligence</span><br><span class="mod-desc">Finnhub WebSocket (~1s) + Fast RSS (30s) + FinBERT NLP</span></li>
+        <li><span class="mod-name">Intermarket</span><br><span class="mod-desc">DXY + XAUUSD + US10Y + SPX correlation tracking</span></li>
+        <li><span class="mod-name">Execution</span><br><span class="mod-desc">Smart routing: Direct / TWAP / VWAP / Implementation Shortfall</span></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Risk & Safety</h3>
+      <ul class="module-list">
+        <li style="border-left-color: var(--red)"><span class="mod-name">Kill Switch</span><br><span class="mod-desc">Manual file + auto-trigger (equity floor, consecutive rejections)</span></li>
+        <li style="border-left-color: var(--red)"><span class="mod-name">Daily Loss Guard</span><br><span class="mod-desc">Hard 2% daily loss limit, auto-reset each day</span></li>
+        <li style="border-left-color: var(--orange)"><span class="mod-name">Portfolio VaR</span><br><span class="mod-desc">Multi-asset VaR with dynamic correlation matrix</span></li>
+        <li style="border-left-color: var(--orange)"><span class="mod-name">Volatility Targeting</span><br><span class="mod-desc">Auto-scale leverage to target 10% portfolio vol</span></li>
+        <li style="border-left-color: var(--orange)"><span class="mod-name">Regime Adaptive</span><br><span class="mod-desc">Trending 1.2x, Volatile 0.5x, Flat 0.7x position scaling</span></li>
+        <li style="border-left-color: var(--green)"><span class="mod-name">Weekend Gap Guard</span><br><span class="mod-desc">Block new trades Fri 20:00 UTC, reduce from 14:00</span></li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ===== ARCHITECTURE TAB ===== -->
+<div id="tab-architecture" class="tab-content">
+  <div class="card">
+    <h3>System Architecture Diagram</h3>
+    <div class="arch-diagram"><span class="hl">                           ApexFX Quantum — System Architecture</span>
+
+     <span class="cy">MT5 Terminal</span>            <span class="cy">Finnhub WS</span>         <span class="cy">CFTC COT</span>          <span class="cy">Forex Factory</span>
+          │                      │                   │                    │
+          ▼                      ▼                   ▼                    ▼
+    ┌─────────────┐    ┌────────────────┐   ┌──────────────┐   ┌──────────────────┐
+    │ <span class="gr">TickCollector</span> │    │ <span class="gr">RealtimeNews</span>   │   │ <span class="gr">COTFetcher</span>   │   │ <span class="gr">CalendarFetcher</span>  │
+    │BarAggregator│    │  Stream        │   │              │   │  XML + HTML      │
+    └──────┬──────┘    └───────┬────────┘   └──────┬───────┘   └────────┬─────────┘
+           │                   │                   │                    │
+           ▼                   ▼                   ▼                    ▼
+    ┌──────────────────────────────────────────────────────────────────────────┐
+    │                         <span class="hl">Feature Pipeline</span>                                │
+    │                                                                          │
+    │  <span class="pu">VolumeProfile</span> │ <span class="pu">OrderFlow</span> │ <span class="pu">Hurst</span> │ <span class="pu">Spectral</span> │ <span class="pu">IntermarketCorr</span>      │
+    │  <span class="pu">Regime</span>        │ <span class="pu">Clustering</span>│ <span class="pu">Fundamental</span>│ <span class="pu">Structure</span>│ <span class="pu">OrderBook</span>       │
+    │  <span class="pu">Sentiment</span>     │ <span class="or">COT</span>       │ <span class="or">Seasonal</span>   │ <span class="or">CentralBank</span>               │
+    │                                                                          │
+    │  → Z-Score Normalization → Forward-Fill NaN → 120+ features             │
+    └─────────────────────────────┬────────────────────────────────────────────┘
+                                  │
+                                  ▼
+    ┌──────────────────────────────────────────────────────────────────────────┐
+    │                       <span class="hl">HiveMind Ensemble</span>                                │
+    │                                                                          │
+    │   ┌───────────────┐  ┌────────────────┐  ┌──────────────────┐           │
+    │   │ <span class="gr">Trend Agent</span>   │  │ <span class="gr">Reversion Agent</span>│  │ <span class="gr">Breakout Agent</span>   │           │
+    │   │   SAC/TQC      │  │   SAC/TQC       │  │   SAC/TQC         │           │
+    │   │   action_t     │  │   action_r       │  │   action_b         │           │
+    │   └───────┬───────┘  └───────┬─────────┘  └────────┬──────────┘           │
+    │           │                  │                      │                     │
+    │           ▼                  ▼                      ▼                     │
+    │         ┌────────────────────────────────────────────┐                    │
+    │         │         <span class="or">Gating Network</span> (TFT Attention)     │                    │
+    │         │  w_t * action_t + w_r * action_r +        │                    │
+    │         │  w_b * action_b = <span class="hl">combined_action</span>           │                    │
+    │         └──────────────────┬─────────────────────────┘                    │
+    │                            │                                              │
+    │   + MC Dropout Uncertainty │ + Regime Classification                      │
+    └────────────────────────────┼──────────────────────────────────────────────┘
+                                 │
+                                 ▼
+    ┌──────────────────────────────────────────────────────────────────────────┐
+    │                       <span class="rd">Risk Manager</span> (10 Gates)                             │
+    │                                                                          │
+    │  <span class="rd">HARD BLOCKS:</span>                        <span class="or">SCALING:</span>                           │
+    │  ✗ Kill Switch                     ◐ Spread Check                        │
+    │  ✗ Weekend Gap                     ◐ VaR Limit                           │
+    │  ✗ Daily Loss (2%)                 ◐ Portfolio VaR (Dynamic Corr)        │
+    │  ✗ Strategy Filter                 ◐ Volatility Targeting                │
+    │  ✗ Cooldown                        ◐ Regime Adaptive                     │
+    │  ✗ Max Drawdown (5%)               ◐ Concentration Limit                 │
+    │                                    ◐ MC Dropout Uncertainty              │
+    └─────────────────────────────┬────────────────────────────────────────────┘
+                                  │
+                                  ▼
+    ┌──────────────────────────────────────────────────────────────────────────┐
+    │                       <span class="gr">Smart Executor</span>                                     │
+    │                                                                          │
+    │  Small orders → <span class="cy">Direct Market</span>                                         │
+    │  Medium orders → <span class="cy">TWAP</span> (Time-Weighted Average Price)                    │
+    │  Large orders → <span class="cy">Implementation Shortfall</span>                               │
+    │  + Slippage monitoring + Fill tracking                                   │
+    └─────────────────────────────┬────────────────────────────────────────────┘
+                                  │
+                                  ▼
+    ┌──────────────────────────────────────────────────────────────────────────┐
+    │                       <span class="hl">Dashboard</span> (Plotly + Dash)                          │
+    │  Overview │ Signals │ Risk │ Training    — Port 8050, 5s refresh        │
+    └──────────────────────────────────────────────────────────────────────────┘
+</div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <h3>Package Structure</h3>
+      <ul class="module-list">
+        <li><span class="mod-name">apexfx.data</span><br><span class="mod-desc">MT5 client, tick collector, bar aggregator, MTF aligner, intermarket, COT, calendar, news</span></li>
+        <li><span class="mod-name">apexfx.features</span><br><span class="mod-desc">14 extractors + pipeline orchestrator + normalizer</span></li>
+        <li><span class="mod-name">apexfx.models</span><br><span class="mod-desc">HiveMind (Trend/Reversion/Breakout), TFT backbone, gating network</span></li>
+        <li><span class="mod-name">apexfx.env</span><br><span class="mod-desc">Gym trading environment, reward functions, trade filter</span></li>
+        <li><span class="mod-name">apexfx.training</span><br><span class="mod-desc">Trainer orchestrator, curriculum, walk-forward, PER, augmentation</span></li>
+        <li><span class="mod-name">apexfx.risk</span><br><span class="mod-desc">RiskManager, VaR, drawdown, cooldown, correlation risk, stress testing</span></li>
+        <li><span class="mod-name">apexfx.execution</span><br><span class="mod-desc">Smart executor (TWAP/VWAP/IS), order manager, fill tracker</span></li>
+        <li><span class="mod-name">apexfx.live</span><br><span class="mod-desc">Trading loop, signal generator, portfolio manager, state manager</span></li>
+        <li><span class="mod-name">apexfx.dashboard</span><br><span class="mod-desc">Dash app, 4 pages (overview, signals, risk, training)</span></li>
+        <li><span class="mod-name">apexfx.alerts</span><br><span class="mod-desc">Telegram + Webhook alerting system</span></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Data Sources</h3>
+      <ul class="module-list">
+        <li style="border-left-color: var(--green)"><span class="mod-name">MetaTrader 5</span><br><span class="mod-desc">Primary: Tick data, OHLCV bars (M1-D1), order book</span></li>
+        <li style="border-left-color: var(--green)"><span class="mod-name">Finnhub WebSocket</span><br><span class="mod-desc">Real-time news, ~1s latency, auto-reconnect</span></li>
+        <li style="border-left-color: var(--cyan)"><span class="mod-name">RSS Feeds</span><br><span class="mod-desc">ForexLive, FXStreet, DailyFX — 30s polling fallback</span></li>
+        <li style="border-left-color: var(--cyan)"><span class="mod-name">Forex Factory</span><br><span class="mod-desc">Economic calendar, XML (live) + HTML scraper (historical)</span></li>
+        <li style="border-left-color: var(--purple)"><span class="mod-name">CFTC COT Reports</span><br><span class="mod-desc">Weekly institutional positioning (8 currencies)</span></li>
+        <li style="border-left-color: var(--purple)"><span class="mod-name">Intermarket</span><br><span class="mod-desc">DXY, XAUUSD, US10Y, SPX via MT5</span></li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ===== FEATURES TAB ===== -->
+<div id="tab-features" class="tab-content">
+  <input type="text" class="search-box" id="featureSearch" placeholder="Search features..." oninput="filterFeatures()">
+
+  <div class="card">
+    <h3>Feature Inventory — 14 Extractors, 120+ Features</h3>
+    <table id="featureTable">
+      <thead>
+        <tr><th>Extractor</th><th>#</th><th>Features</th><th>Phase</th><th>Category</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>VolumeProfileExtractor</td><td>5</td><td>hvn_distance, lvn_distance, volume_profile_skew, poc_price, poc_distance</td><td><span class="badge badge-green">Core</span></td><td>Microstructure</td></tr>
+        <tr><td>OrderFlowExtractor</td><td>10</td><td>delta, delta_ma, delta_divergence, cvd, trade_intensity, buyer_ratio, volume_surprise, tick_speed, aggressor_ratio, flow_toxicity</td><td><span class="badge badge-green">Core</span></td><td>Microstructure</td></tr>
+        <tr><td>HurstExtractor</td><td>2</td><td>hurst_exponent, hurst_regime</td><td><span class="badge badge-green">Core</span></td><td>Statistical</td></tr>
+        <tr><td>SpectralExtractor</td><td>13</td><td>spectral_dominant_frequency, spectral_power, spectral_entropy, spectral_centroid, spectral_bandwidth, spectral_rolloff, spectral_flatness, spectral_crest, + 5 band powers</td><td><span class="badge badge-green">Core</span></td><td>Signal Processing</td></tr>
+        <tr><td>IntermarketCorrExtractor</td><td>28</td><td>DXY/XAUUSD/US10Y/SPX × (Pearson_20/60/252 + Spearman_20/60/252 + beta)</td><td><span class="badge badge-blue">Phase 5</span></td><td>Cross-Asset</td></tr>
+        <tr><td>RegimeExtractor</td><td>6</td><td>regime_trending, regime_mean_reverting, regime_flat, regime_label, realized_vol, trend_strength</td><td><span class="badge badge-green">Core</span></td><td>Regime</td></tr>
+        <tr><td>ClusteringExtractor</td><td>5</td><td>cluster_id, cluster_distance, volatility_cluster, returns_cluster, volume_cluster</td><td><span class="badge badge-green">Core</span></td><td>Unsupervised</td></tr>
+        <tr><td>FundamentalExtractor</td><td>8</td><td>news_surprise, news_impact_active, time_to_event, fundamental_bias, rate_differential, hawkish_dovish, event_volatility_ratio, conflicting_signals</td><td><span class="badge badge-blue">Phase 3</span></td><td>Fundamental</td></tr>
+        <tr><td>StructureExtractor</td><td>8</td><td>support_distance, resistance_distance, structure_break_bull, structure_break_bear, structure_trend, retest_signal, swing_range, breakout_strength</td><td><span class="badge badge-blue">Phase 3</span></td><td>Price Action</td></tr>
+        <tr><td>OrderBookExtractor</td><td>4</td><td>bid_ask_imbalance, book_pressure, depth_ratio, wall_distance</td><td><span class="badge badge-blue">Phase 4</span></td><td>Microstructure</td></tr>
+        <tr><td>SentimentExtractor</td><td>6</td><td>sentiment_score, sentiment_magnitude, sentiment_divergence, sentiment_momentum, headline_count, sentiment_surprise</td><td><span class="badge badge-blue">Phase 4</span></td><td>NLP</td></tr>
+        <tr><td>COTExtractor</td><td>7</td><td>cot_spec_net_norm, cot_spec_change, cot_comm_net_norm, cot_oi_change, cot_spec_extreme, cot_momentum, cot_divergence</td><td><span class="badge badge-purple">Phase 7</span></td><td>Positioning</td></tr>
+        <tr><td>SeasonalExtractor</td><td>8</td><td>seasonal_month_vol, seasonal_dow_vol, seasonal_usd_bias, seasonal_month_end, seasonal_quarter_end, seasonal_summer, seasonal_year_end, seasonal_session</td><td><span class="badge badge-purple">Phase 7</span></td><td>Calendar</td></tr>
+        <tr><td>CentralBankExtractor</td><td>6</td><td>cb_hawkish_score, cb_dovish_score, cb_net_stance, cb_stance_momentum, cb_conviction, cb_divergence</td><td><span class="badge badge-purple">Phase 7</span></td><td>Monetary Policy</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="grid-3">
+    <div class="card" style="text-align:center">
+      <h3>By Category</h3>
+      <div class="kpi"><div class="value" style="font-size:1.5em">4</div><div class="label">Microstructure (19 features)</div></div>
+      <div class="kpi"><div class="value" style="font-size:1.5em">3</div><div class="label">Statistical/ML (20 features)</div></div>
+      <div class="kpi"><div class="value" style="font-size:1.5em">4</div><div class="label">Fundamental/NLP (27 features)</div></div>
+      <div class="kpi"><div class="value" style="font-size:1.5em">3</div><div class="label">Cross-Asset/Calendar (43 features)</div></div>
+    </div>
+    <div class="card" style="text-align:center">
+      <h3>By Phase</h3>
+      <div class="kpi"><div class="value" style="font-size:1.5em">41</div><div class="label">Core (Phase 1-2)</div></div>
+      <div class="kpi"><div class="value" style="font-size:1.5em">16</div><div class="label">Phase 3 (Fundamental+Structure)</div></div>
+      <div class="kpi"><div class="value" style="font-size:1.5em">38</div><div class="label">Phase 4-5 (NLP+Intermarket)</div></div>
+      <div class="kpi"><div class="value" style="font-size:1.5em">21</div><div class="label">Phase 7 (Advanced)</div></div>
+    </div>
+    <div class="card" style="text-align:center">
+      <h3>Data Frequency</h3>
+      <div class="kpi"><div class="value" style="font-size:1.5em">~90</div><div class="label">Bar-level (per candle)</div></div>
+      <div class="kpi"><div class="value" style="font-size:1.5em">~6</div><div class="label">Event-driven (news)</div></div>
+      <div class="kpi"><div class="value" style="font-size:1.5em">~7</div><div class="label">Weekly (COT)</div></div>
+      <div class="kpi"><div class="value" style="font-size:1.5em">~6</div><div class="label">Live-updated (central bank)</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== RISK TAB ===== -->
+<div id="tab-risk" class="tab-content">
+  <div class="card">
+    <h3>Risk Management — 10 Sequential Gates</h3>
+    <p style="color: var(--text-muted); margin-bottom: 16px;">Every trade must pass ALL gates. Hard blocks force action to 0. Scaling gates reduce position size.</p>
+
+    <div class="risk-gate risk-hard"><div class="gate-icon">🔴</div><div><div class="gate-name">1. Kill Switch</div><div class="gate-desc">Emergency halt — manual file (touch data/KILL_SWITCH) or auto-trigger (equity floor 80%, 10 consecutive rejections)</div></div></div>
+    <div class="risk-gate risk-hard"><div class="gate-icon">🔴</div><div><div class="gate-name">2. Weekend Gap Guard</div><div class="gate-desc">Block new trades Fri 20:00 UTC, reduce 50% from Fri 14:00, block all on Sat/Sun</div></div></div>
+    <div class="risk-gate risk-hard"><div class="gate-icon">🔴</div><div><div class="gate-name">3. Daily Loss Limit</div><div class="gate-desc">Hard 2% daily loss limit, auto-resets each calendar day (UTC)</div></div></div>
+    <div class="risk-gate risk-hard"><div class="gate-icon">🔴</div><div><div class="gate-name">4. Strategy Filter</div><div class="gate-desc">Rule-based blackout during high-impact news and market structure breaks</div></div></div>
+    <div class="risk-gate risk-hard"><div class="gate-icon">🔴</div><div><div class="gate-name">5. Cooldown</div><div class="gate-desc">N-bar cooldown after consecutive losses (configurable)</div></div></div>
+    <div class="risk-gate risk-hard"><div class="gate-icon">🔴</div><div><div class="gate-name">6. Max Drawdown</div><div class="gate-desc">5% max drawdown — triggers force-close of all positions</div></div></div>
+    <div class="risk-gate risk-scale"><div class="gate-icon">🟡</div><div><div class="gate-name">7. VaR Limit + Portfolio VaR</div><div class="gate-desc">99% confidence VaR with 252-day lookback. Portfolio VaR uses dynamic correlation matrix</div></div></div>
+    <div class="risk-gate risk-scale"><div class="gate-icon">🟡</div><div><div class="gate-name">8. Volatility Targeting</div><div class="gate-desc">Auto-scale leverage to target 10% annualized portfolio vol. Conservative (0.5x) until 20+ days data</div></div></div>
+    <div class="risk-gate risk-scale"><div class="gate-icon">🟡</div><div><div class="gate-name">9. Regime Adaptive</div><div class="gate-desc">Trending: 1.2x, Mean-Reverting: 1.0x, Flat: 0.7x, Volatile: 0.5x position scaling</div></div></div>
+    <div class="risk-gate risk-scale"><div class="gate-icon">🟡</div><div><div class="gate-name">10. Uncertainty (MC Dropout)</div><div class="gate-desc">Reduces position proportional to model uncertainty. High uncertainty → smaller position</div></div></div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <h3>Position Sizing</h3>
+      <ul class="module-list">
+        <li><span class="mod-name">Kelly Criterion (Half-Kelly)</span><br><span class="mod-desc">f* = (win_rate * avg_win - (1-win_rate) * avg_loss) / avg_win × 0.5</span></li>
+        <li><span class="mod-name">ATR-Based Stop Loss</span><br><span class="mod-desc">Regime-dependent: Trending 2.5x ATR, Volatile 1.5x, Flat 2.0x, Mean-Reverting 1.8x</span></li>
+        <li><span class="mod-name">Concentration Limit</span><br><span class="mod-desc">Max 40% total exposure, 25% per symbol, 0.70 correlation limit</span></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Dynamic Correlations</h3>
+      <ul class="module-list">
+        <li><span class="mod-name">DynamicCorrelationTracker</span><br><span class="mod-desc">Rolling 60-bar window, np.corrcoef, auto-replaces static estimates when 20+ bars available</span></li>
+        <li><span class="mod-name">Static Fallback</span><br><span class="mod-desc">EURUSD/GBPUSD: 0.85, EURUSD/USDCHF: -0.90, AUDUSD/NZDUSD: 0.90</span></li>
+        <li><span class="mod-name">CorrelationRiskManager</span><br><span class="mod-desc">Portfolio variance w'Cw, Herfindahl concentration, effective exposure check</span></li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ===== AGENTS TAB ===== -->
+<div id="tab-agents" class="tab-content">
+  <div class="card">
+    <h3>HiveMind Multi-Agent Ensemble</h3>
+    <p style="color: var(--text-muted); margin-bottom: 20px;">Three specialist RL agents, each trained on different market conditions, combined via attention-based gating network.</p>
+  </div>
+
+  <div class="grid-3">
+    <div class="agent-card" style="border-color: var(--green)">
+      <div class="agent-icon">📈</div>
+      <h4 style="color: var(--green)">Trend Agent</h4>
+      <p style="font-size:0.85em; color: var(--text-muted)">
+        Specializes in momentum and trend-following. Activated in trending regimes.
+        Wider stops (2.5x ATR), trails profits.
+      </p>
+      <div style="margin-top:12px">
+        <span class="badge badge-green">SAC/TQC</span>
+        <span class="badge badge-green">Momentum</span>
+      </div>
+    </div>
+    <div class="agent-card" style="border-color: var(--accent)">
+      <div class="agent-icon">🔄</div>
+      <h4 style="color: var(--accent)">Reversion Agent</h4>
+      <p style="font-size:0.85em; color: var(--text-muted)">
+        Mean-reversion specialist. Fades extremes, uses Hurst exponent and Bollinger signals.
+        Tighter stops (1.8x ATR), targets mean.
+      </p>
+      <div style="margin-top:12px">
+        <span class="badge badge-blue">SAC/TQC</span>
+        <span class="badge badge-blue">Mean Reversion</span>
+      </div>
+    </div>
+    <div class="agent-card" style="border-color: var(--orange)">
+      <div class="agent-icon">💥</div>
+      <h4 style="color: var(--orange)">Breakout Agent</h4>
+      <p style="font-size:0.85em; color: var(--text-muted)">
+        Captures structure breaks and volatility expansions. Uses order flow + volume.
+        Dynamic stops, aggressive initial sizing.
+      </p>
+      <div style="margin-top:12px">
+        <span class="badge badge-orange">SAC/TQC</span>
+        <span class="badge badge-orange">Breakout</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h3>Gating Network (TFT Attention)</h3>
+    <p style="color: var(--text-muted); margin-bottom:12px">
+      The gating network dynamically assigns weights to each agent based on current market conditions.
+      Uses Temporal Fusion Transformer attention mechanism to learn which agent performs best in each regime.
+    </p>
+    <div class="arch-diagram" style="font-size:0.85em">
+  <span class="gr">Trend Agent</span>  ──→  action_t (0.35) ─┐
+  <span class="hl">Reversion Agent</span>──→  action_r (0.25) ─┤──→  <span class="or">Gating Network</span>  ──→  <span class="hl">Combined Action</span>  ──→  Risk Manager
+  <span class="or">Breakout Agent</span> ──→  action_b (0.40) ─┘       (TFT)
+                                                    │
+                                         Market Features ──→ Regime Detection ──→ Weight Allocation
+    </div>
+  </div>
+</div>
+
+<!-- ===== ROADMAP TAB ===== -->
+<div id="tab-roadmap" class="tab-content">
+  <div class="card">
+    <h3>Development Roadmap</h3>
+    <div class="timeline">
+      <div class="timeline-item done">
+        <h4 style="color: var(--green)">Phase 1-2: Core Engine <span class="badge badge-green">DONE</span></h4>
+        <p>RL environment, SAC/TQC training, reward function, basic features (Volume Profile, Hurst, Spectral, Order Flow, Regime, Clustering)</p>
+      </div>
+      <div class="timeline-item done">
+        <h4 style="color: var(--green)">Phase 3: Market Intelligence <span class="badge badge-green">DONE</span></h4>
+        <p>Fundamental features, structure analysis, economic calendar, trade filtering, strategy blackouts</p>
+      </div>
+      <div class="timeline-item done">
+        <h4 style="color: var(--green)">Phase 4: NLP + Order Book <span class="badge badge-green">DONE</span></h4>
+        <p>FinBERT sentiment, order book features, real-time news stream (Finnhub WebSocket + RSS)</p>
+      </div>
+      <div class="timeline-item done">
+        <h4 style="color: var(--green)">Phase 5: Intermarket <span class="badge badge-green">DONE</span></h4>
+        <p>DXY/XAUUSD/US10Y/SPX correlation tracking, portfolio VaR, intermarket features in training + live</p>
+      </div>
+      <div class="timeline-item done">
+        <h4 style="color: var(--green)">Phase 6: Production Hardening <span class="badge badge-green">DONE</span></h4>
+        <p>Docker + compose, CI/CD (GitHub Actions), Telegram alerts, resilience (auto-reconnect, graceful degradation)</p>
+      </div>
+      <div class="timeline-item done">
+        <h4 style="color: var(--green)">Phase 7: Advanced Features <span class="badge badge-green">DONE</span></h4>
+        <p>Dynamic correlations, COT data, seasonal patterns, central bank speech analysis. +21 features, +58 tests</p>
+      </div>
+      <div class="timeline-item current">
+        <h4 style="color: var(--orange)">Phase 8: Multi-Strategy <span class="badge badge-orange">NEXT</span></h4>
+        <p>Multi-broker support, strategy marketplace, advanced portfolio optimization, adaptive strategy selection</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== TESTS TAB ===== -->
+<div id="tab-tests" class="tab-content">
+  <div class="grid-3">
+    <div class="card kpi"><div class="value" style="color: var(--green)">284</div><div class="label">Tests Passing</div></div>
+    <div class="card kpi"><div class="value" style="color: var(--red)">9</div><div class="label">Failing (torch dependency)</div></div>
+    <div class="card kpi"><div class="value" style="color: var(--text-muted)">2</div><div class="label">Skipped</div></div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <h3>Unit Tests</h3>
+      <table>
+        <thead><tr><th>File</th><th>Tests</th><th>Status</th></tr></thead>
+        <tbody>
+          <tr><td>test_tier1.py</td><td>100+</td><td><span class="badge badge-green">Pass</span> <span class="badge badge-orange">9 torch</span></td></tr>
+          <tr><td>test_phase3_5.py</td><td>~20</td><td><span class="badge badge-green">Pass</span></td></tr>
+          <tr><td>test_phase4.py</td><td>~20</td><td><span class="badge badge-green">Pass</span></td></tr>
+          <tr><td>test_phase5_intermarket.py</td><td>18</td><td><span class="badge badge-green">Pass</span></td></tr>
+          <tr><td>test_realtime_news.py</td><td>28</td><td><span class="badge badge-green">Pass</span></td></tr>
+          <tr><td>test_phase7_advanced.py</td><td>34</td><td><span class="badge badge-green">Pass</span></td></tr>
+          <tr><td>test_alerts.py</td><td>~10</td><td><span class="badge badge-green">Pass</span></td></tr>
+          <tr><td>test_risk/test_var.py</td><td>~8</td><td><span class="badge badge-green">Pass</span></td></tr>
+          <tr><td>test_risk/test_position_sizer.py</td><td>~8</td><td><span class="badge badge-green">Pass</span></td></tr>
+          <tr><td>test_features/test_hurst.py</td><td>~6</td><td><span class="badge badge-green">Pass</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h3>Integration Tests</h3>
+      <table>
+        <thead><tr><th>Suite</th><th>Tests</th><th>Status</th></tr></thead>
+        <tbody>
+          <tr><td>Feature Pipeline E2E</td><td>4</td><td><span class="badge badge-green">Pass</span></td></tr>
+          <tr><td>Phase 7 Features Integration</td><td>4</td><td><span class="badge badge-green">Pass</span></td></tr>
+          <tr><td>Dynamic Correlations Integration</td><td>2</td><td><span class="badge badge-green">Pass</span></td></tr>
+          <tr><td>Risk Manager Integration</td><td>5</td><td><span class="badge badge-green">Pass</span></td></tr>
+          <tr><td>COT Data Integration</td><td>2</td><td><span class="badge badge-green">Pass</span></td></tr>
+          <tr><td>Full Pipeline + Phase 7</td><td>4</td><td><span class="badge badge-green">Pass</span></td></tr>
+          <tr><td>Data Quality Checks</td><td>3</td><td><span class="badge badge-green">Pass</span></td></tr>
+        </tbody>
+      </table>
+
+      <h3 style="margin-top:20px">Test Coverage by Area</h3>
+      <div style="margin-top:10px">
+        <div style="display:flex;justify-content:space-between;font-size:0.85em"><span>Feature Pipeline</span><span style="color:var(--green)">High</span></div>
+        <div class="progress-bar"><div class="progress-fill" style="width:85%;background:var(--green)"></div></div>
+        <div style="display:flex;justify-content:space-between;font-size:0.85em"><span>Risk Management</span><span style="color:var(--green)">High</span></div>
+        <div class="progress-bar"><div class="progress-fill" style="width:80%;background:var(--green)"></div></div>
+        <div style="display:flex;justify-content:space-between;font-size:0.85em"><span>Data Ingestion</span><span style="color:var(--orange)">Medium</span></div>
+        <div class="progress-bar"><div class="progress-fill" style="width:60%;background:var(--orange)"></div></div>
+        <div style="display:flex;justify-content:space-between;font-size:0.85em"><span>Execution</span><span style="color:var(--orange)">Medium</span></div>
+        <div class="progress-bar"><div class="progress-fill" style="width:50%;background:var(--orange)"></div></div>
+        <div style="display:flex;justify-content:space-between;font-size:0.85em"><span>RL Training</span><span style="color:var(--red)">Low (torch dep)</span></div>
+        <div class="progress-bar"><div class="progress-fill" style="width:30%;background:var(--red)"></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div><!-- container -->
+
+<footer style="text-align:center; padding:30px; color:var(--text-muted); font-size:0.8em; border-top:1px solid var(--border); margin-top:40px;">
+  ApexFX Quantum v1.0 — Institutional Forex Trading System<br>
+  RL (SAC/TQC) + HiveMind Multi-Agent + 120+ Features + 10 Risk Gates
+</footer>
+
+<script>
+function showTab(name) {
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  event.target.classList.add('active');
+}
+
+function filterFeatures() {
+  const q = document.getElementById('featureSearch').value.toLowerCase();
+  const rows = document.querySelectorAll('#featureTable tbody tr');
+  rows.forEach(row => {
+    const text = row.textContent.toLowerCase();
+    row.style.display = text.includes(q) ? '' : 'none';
+  });
+}
+</script>
+</body>
+</html>

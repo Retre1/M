@@ -158,6 +158,22 @@ class LiveTradingLoop:
         self._online_learning_interval_s = ol_cfg.check_interval_hours * 3600
         self._new_bars_count = 0
 
+        # --- TIER 1: Live Online Learner (micro-updates) ---
+        self._live_learner = None
+        if ol_cfg.enabled and ol_cfg.update_every_n_trades > 0:
+            try:
+                from apexfx.live.online_learner import LiveOnlineLearner
+                self._live_learner = LiveOnlineLearner(
+                    model=self._signal_gen._model,
+                    config=ol_cfg,
+                )
+            except Exception as e:
+                logger.warning("Live online learner init failed", error=str(e))
+
+        # --- TIER 1: Regime transition tracking ---
+        self._prev_regime: str | None = None
+        self._regime_transition_cooldown: int = 0
+
         # --- Phase 4C: News Sentiment ---
         self._sentiment_extractor = None
         try:
@@ -168,6 +184,74 @@ class LiveTradingLoop:
                     break
         except ImportError:
             pass
+
+        # --- Intermarket data (DXY, Gold, US10Y, SPX) ---
+        self._intermarket_provider = None
+        intermarket_symbols = config.symbols.intermarket
+        if intermarket_symbols:
+            try:
+                from apexfx.data.intermarket import IntermarketDataProvider
+                self._intermarket_provider = IntermarketDataProvider(self._mt5)
+                self._intermarket_symbols = intermarket_symbols
+                logger.info(
+                    "Intermarket provider initialized",
+                    instruments=intermarket_symbols,
+                )
+            except Exception as e:
+                logger.warning("Intermarket provider init failed", error=str(e))
+
+        # --- Alerting system (Telegram, Webhook) ---
+        self._alert_manager = None
+        self._risk_alert_monitor = None
+        alert_cfg = getattr(config, "alerts", None)
+        if alert_cfg and alert_cfg.enabled:
+            try:
+                from apexfx.alerts.alert_manager import AlertLevel, AlertManager
+                from apexfx.alerts.risk_alerts import RiskAlertMonitor
+
+                level_map = {
+                    "INFO": AlertLevel.INFO,
+                    "WARNING": AlertLevel.WARNING,
+                    "CRITICAL": AlertLevel.CRITICAL,
+                    "EMERGENCY": AlertLevel.EMERGENCY,
+                }
+                min_level = level_map.get(alert_cfg.min_level.upper(), AlertLevel.WARNING)
+                self._alert_manager = AlertManager(
+                    cooldown_s=alert_cfg.cooldown_s,
+                    min_level=min_level,
+                )
+
+                if alert_cfg.telegram_enabled:
+                    import os
+                    from apexfx.alerts.telegram_bot import TelegramAlerter
+                    token = alert_cfg.telegram_bot_token or os.getenv("TELEGRAM_BOT_TOKEN", "")
+                    chat_id = alert_cfg.telegram_chat_id or os.getenv("TELEGRAM_CHAT_ID", "")
+                    if token and chat_id:
+                        self._alert_manager.add_channel(TelegramAlerter(token, chat_id))
+
+                if alert_cfg.webhook_enabled:
+                    import os
+                    from apexfx.alerts.webhook import WebhookAlerter
+                    url = alert_cfg.webhook_url or os.getenv("ALERT_WEBHOOK_URL", "")
+                    if url:
+                        self._alert_manager.add_channel(
+                            WebhookAlerter(url, fmt=alert_cfg.webhook_format)
+                        )
+
+                self._risk_alert_monitor = RiskAlertMonitor(self._alert_manager)
+                logger.info("Alert system initialized")
+            except Exception as e:
+                logger.warning("Alert system init failed", error=str(e))
+
+        # --- Real-time news stream (Finnhub WS + Fast RSS) ---
+        self._news_stream = None
+        news_cfg = config.data.news
+        if news_cfg.enabled and self._sentiment_extractor is not None:
+            try:
+                from apexfx.data.realtime_news import RealtimeNewsStream
+                self._news_stream = RealtimeNewsStream(news_cfg)
+            except Exception as e:
+                logger.warning("RealtimeNewsStream init failed", error=str(e))
 
         # Lock to serialize bar processing (prevent race condition
         # where two H1 bars are processed in parallel)
@@ -205,8 +289,14 @@ class LiveTradingLoop:
                 asyncio.create_task(self._state_persist_loop()),
                 asyncio.create_task(self._calendar_update_loop()),
                 asyncio.create_task(self._online_learning_loop()),
-                asyncio.create_task(self._news_update_loop()),
             ]
+
+            # Real-time news: prefer WebSocket stream, fallback to polling
+            if self._news_stream is not None:
+                tasks.append(asyncio.create_task(self._news_stream.start()))
+                tasks.append(asyncio.create_task(self._news_consumer_loop()))
+            else:
+                tasks.append(asyncio.create_task(self._news_update_loop()))
 
             # Wait for shutdown
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -275,6 +365,14 @@ class LiveTradingLoop:
                 await self._force_close_if_needed(bar)
                 return
 
+            # --- Alert monitor: check risk states and fire alerts ---
+            if self._risk_alert_monitor:
+                await self._risk_alert_monitor.check_risk_state(
+                    self._risk_manager,
+                    portfolio_value=self._state.state.equity,
+                    symbol=self._symbol,
+                )
+
             # --- Force close check: risk manager signals close-all ---
             if self._risk_manager.force_close_all():
                 logger.warning("Risk manager signals force close all")
@@ -299,6 +397,22 @@ class LiveTradingLoop:
 
             # Build DataFrame for feature computation
             bars_df = pd.DataFrame(self._bars_buffer)
+
+            # 1b. Merge intermarket data (DXY, Gold, US10Y, SPX)
+            if self._intermarket_provider is not None:
+                try:
+                    intermarket_df = self._intermarket_provider.get_all_intermarket(
+                        self._intermarket_symbols,
+                        timeframe="H1",
+                        count=len(bars_df),
+                    )
+                    if not intermarket_df.empty and "time" in intermarket_df.columns:
+                        bars_df = bars_df.merge(
+                            intermarket_df, on="time", how="left",
+                        )
+                        bars_df = bars_df.ffill()
+                except Exception as e:
+                    logger.debug("Intermarket merge failed", error=str(e))
 
             # 2. Feature pipeline
             try:
@@ -355,6 +469,37 @@ class LiveTradingLoop:
             self._health.update_inference_latency(signal.inference_time_ms)
             self._new_bars_count += 1
 
+            # --- TIER 1: Regime transition handling ---
+            self._risk_manager.set_regime(signal.regime)
+
+            if signal.regime != self._prev_regime and self._prev_regime is not None:
+                if self._is_major_transition(self._prev_regime, signal.regime):
+                    logger.warning(
+                        "Major regime transition — flattening position",
+                        from_regime=self._prev_regime,
+                        to_regime=signal.regime,
+                    )
+                    await self._force_close_if_needed(bar)
+                    self._regime_transition_cooldown = 3
+                else:
+                    logger.info(
+                        "Minor regime transition — reducing position",
+                        from_regime=self._prev_regime,
+                        to_regime=signal.regime,
+                    )
+                    if self._state.state.current_position_volume > 0:
+                        await self._executor.reduce_position(0.5)
+            self._prev_regime = signal.regime
+
+            # Skip new entries during cooldown
+            if self._regime_transition_cooldown > 0:
+                self._regime_transition_cooldown -= 1
+                logger.debug(
+                    "Regime cooldown active",
+                    remaining=self._regime_transition_cooldown,
+                )
+                return
+
             # Shadow trading: record live signal for comparison
             if self._shadow_trader is not None:
                 self._shadow_trader.on_bar(
@@ -388,7 +533,12 @@ class LiveTradingLoop:
             )
 
             self._risk_manager.update_portfolio(self._state.state.equity)
-            risk_decision = self._risk_manager.evaluate_action(signal.action, market_state)
+            # Pass uncertainty score to risk evaluation for position scaling
+            risk_decision = self._risk_manager.evaluate_action(
+                signal.action,
+                market_state,
+                uncertainty_score=signal.uncertainty_score,
+            )
 
             # 5. Sync MT5 positions before execution to ensure state consistency
             self._sync_mt5_positions()
@@ -413,6 +563,21 @@ class LiveTradingLoop:
                     self._state.close_position(result.fill_price or bar.close, pnl)
                     self._risk_manager.record_trade(pnl, trade_return=trade_return)
 
+                    # --- TIER 1: Live learner — record trade result ---
+                    if self._live_learner is not None:
+                        self._live_learner.record_trade_result(trade_return)
+                        self._live_learner.maybe_update()
+
+            # --- TIER 1: Live learner — record transition ---
+            if self._live_learner is not None:
+                self._live_learner.record_transition(
+                    obs=observation,
+                    action=signal.action,
+                    reward=0.0,  # Will be overwritten by actual reward later
+                    next_obs=observation,  # Approximation — true next_obs unavailable
+                    done=False,
+                )
+
             # 7. Update state
             self._update_portfolio_value(bar.close)
 
@@ -420,12 +585,32 @@ class LiveTradingLoop:
                 "Bar processed",
                 time=str(bar.time),
                 action=round(signal.action, 4),
+                regime=signal.regime,
+                uncertainty=round(signal.uncertainty_score, 4),
                 risk_approved=risk_decision.approved,
                 equity=round(self._state.state.equity, 2),
             )
 
         except Exception as e:
             logger.error("Bar processing error", error=str(e), exc_info=True)
+
+    @staticmethod
+    def _is_major_transition(from_regime: str, to_regime: str) -> bool:
+        """Determine if a regime transition is major (requires flattening).
+
+        Major transitions involve a fundamental change in market character:
+        - trending ↔ mean_reverting: strategy needs to reverse
+        - any ↔ volatile: risk profile changes drastically
+
+        Minor transitions are between adjacent regimes:
+        - trending ↔ flat, mean_reverting ↔ flat
+        """
+        major_pairs = {
+            frozenset({"trending", "mean_reverting"}),
+            frozenset({"trending", "volatile"}),
+            frozenset({"mean_reverting", "volatile"}),
+        }
+        return frozenset({from_regime, to_regime}) in major_pairs
 
     def _sync_mt5_positions(self) -> None:
         """Sync internal state with actual MT5 positions.
@@ -552,19 +737,42 @@ class LiveTradingLoop:
         self._state.update_equity(equity, unrealized)
 
     async def _health_check_loop(self) -> None:
-        """Periodic health checks."""
+        """Periodic health checks with exponential backoff reconnect."""
+        reconnect_attempts = 0
+        max_reconnect_delay = 120  # Max 2 minutes between retries
+
         while self._running:
             health = self._health.check()
             if not health.overall_healthy:
                 logger.warning("System unhealthy", issues=health.issues)
 
-                # Auto-reconnect MT5 if disconnected
+                # Auto-reconnect MT5 with exponential backoff
                 if not health.mt5_connected:
+                    # Alert on first disconnect
+                    if self._risk_alert_monitor and reconnect_attempts == 0:
+                        await self._risk_alert_monitor.on_mt5_disconnect()
+
+                    delay = min(2 ** reconnect_attempts, max_reconnect_delay)
+                    reconnect_attempts += 1
+                    logger.info(
+                        "MT5 reconnect attempt",
+                        attempt=reconnect_attempts,
+                        delay_s=delay,
+                    )
                     try:
                         self._mt5.connect()
-                        logger.info("MT5 reconnected")
+                        logger.info("MT5 reconnected", attempts=reconnect_attempts)
+                        if self._risk_alert_monitor:
+                            await self._risk_alert_monitor.on_mt5_reconnect()
+                        reconnect_attempts = 0  # Reset on success
                     except Exception as e:
-                        logger.error("MT5 reconnect failed", error=str(e))
+                        logger.error(
+                            "MT5 reconnect failed",
+                            error=str(e),
+                            next_retry_s=delay,
+                        )
+                else:
+                    reconnect_attempts = 0  # Reset if connected
 
                 # Safe mode: when unhealthy and has open position, close it
                 state = self._state.state
@@ -660,8 +868,58 @@ class LiveTradingLoop:
 
             await asyncio.sleep(self._online_learning_interval_s)
 
+    async def _news_consumer_loop(self) -> None:
+        """Consume headlines from RealtimeNewsStream queue in real-time.
+
+        This replaces the old 15-minute polling with instant consumption
+        from WebSocket + fast RSS sources.
+        """
+        if self._news_stream is None or self._sentiment_extractor is None:
+            return
+
+        queue = self._news_stream.headline_queue
+        batch: list[dict] = []
+        batch_interval = 1.0  # Flush batch every 1 second
+
+        while self._running:
+            try:
+                # Collect headlines with timeout (batch for efficiency)
+                try:
+                    headline = await asyncio.wait_for(
+                        queue.get(), timeout=batch_interval,
+                    )
+                    batch.append(headline.to_dict())
+
+                    # Drain queue (non-blocking) to collect burst of news
+                    while not queue.empty():
+                        try:
+                            h = queue.get_nowait()
+                            batch.append(h.to_dict())
+                        except asyncio.QueueEmpty:
+                            break
+
+                except asyncio.TimeoutError:
+                    pass  # No new headlines — flush whatever we have
+
+                # Flush batch to sentiment extractor
+                if batch:
+                    self._sentiment_extractor.update_headlines(batch)
+                    urgent_count = sum(
+                        1 for h in batch if h.get("is_urgent", False)
+                    )
+                    logger.debug(
+                        "Real-time news batch processed",
+                        n_headlines=len(batch),
+                        urgent=urgent_count,
+                    )
+                    batch.clear()
+
+            except Exception as e:
+                logger.error("News consumer error", error=str(e))
+                await asyncio.sleep(1.0)
+
     async def _news_update_loop(self) -> None:
-        """Periodically fetch news headlines for sentiment features."""
+        """Fallback: periodically fetch news headlines for sentiment features."""
         if self._sentiment_extractor is None:
             return
 
@@ -687,6 +945,10 @@ class LiveTradingLoop:
     async def _cleanup(self) -> None:
         """Graceful cleanup on shutdown."""
         logger.info("Cleaning up...")
+
+        # Stop real-time news stream
+        if self._news_stream is not None:
+            self._news_stream.stop()
 
         # Close any open positions
         state = self._state.state

@@ -1,4 +1,4 @@
-"""Rolling intermarket correlation features."""
+"""Rolling intermarket correlation features (DXY, Gold, US10Y, SPX)."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ class IntermarketCorrExtractor(BaseFeatureExtractor):
         instruments: list[str] | None = None,
         windows: list[int] | None = None,
     ) -> None:
-        self._instruments = instruments or ["DXY", "XAUUSD", "US10Y"]
+        self._instruments = instruments or ["DXY", "XAUUSD", "US10Y", "SPX"]
         self._windows = windows or [20, 60, 252]
 
     @property
