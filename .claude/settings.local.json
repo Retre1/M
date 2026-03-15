@@ -5,7 +5,16 @@
       "Bash(python3 -m venv:*)",
       "Bash(source:*)",
       "Bash(pip install:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(python -c \":*)",
+      "Bash(ls .venv/bin/python*)",
+      "Bash(.venv/bin/python -m pip install xgboost --quiet)",
+      "Bash(.venv/bin/python -c \":*)",
+      "Bash(.venv/bin/python -m pip list)",
+      "Bash(python -c \"from apexfx.config.schema import CurriculumStage, DataAugmentationConfig, EnsembleDiversityConfig, ModelConfig; print\\(''Schema OK''\\)\")",
+      "Bash(ls -la .venv/bin/python*)",
+      "Bash(ls -la venv/bin/python*)",
+      "Bash(.venv/bin/python -m pytest tests/ -x -q --tb=short)"
     ]
   }
 }

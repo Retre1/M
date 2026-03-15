@@ -37,6 +37,9 @@ class TradingSignal:
     timestamp: datetime
     inference_time_ms: float
     variable_importance: list[float] = field(default_factory=list)
+    uncertainty_score: float = 0.0           # MC Dropout uncertainty [0, 1]
+    position_scale: float = 1.0              # Uncertainty-adjusted scale factor
+    recommended_stop_atr_mult: float = 2.5   # Regime-aware stop multiplier
 
 
 class _HiveMindHook:
@@ -89,9 +92,11 @@ class SignalGenerator:
         model_path: str | Path,
         obs_builder: ObservationBuilder | None = None,
         device: str = "cpu",
+        uncertainty_n_samples: int = 10,
     ) -> None:
         self._device = device
         self._obs_builder = obs_builder or ObservationBuilder()
+        self._uncertainty_n_samples = uncertainty_n_samples
 
         # Load SB3 model
         logger.info("Loading model", path=str(model_path))
@@ -143,6 +148,11 @@ class SignalGenerator:
         elif regime_features[4] > 0.5:
             regime = "mean_reverting"
 
+        # Compute uncertainty via MC Dropout
+        uncertainty_score = self._compute_uncertainty(observation)
+        position_scale = max(0.1, 1.0 - 0.5 * uncertainty_score)
+        stop_mult = self._compute_stop_mult(uncertainty_score, regime)
+
         signal = TradingSignal(
             action=action_value,
             confidence=abs(action_value),
@@ -154,6 +164,9 @@ class SignalGenerator:
             timestamp=datetime.now(timezone.utc),
             inference_time_ms=inference_ms,
             variable_importance=self._hook.variable_importance,
+            uncertainty_score=uncertainty_score,
+            position_scale=position_scale,
+            recommended_stop_atr_mult=stop_mult,
         )
 
         gw_str = "/".join(f"{w:.2f}" for w in gating_weights)
@@ -166,10 +179,55 @@ class SignalGenerator:
             breakout=round(breakout_action, 4),
             gating=gw_str,
             regime=signal.regime,
+            uncertainty=round(uncertainty_score, 4),
             inference_ms=round(inference_ms, 2),
         )
 
         return signal
+
+    def _compute_uncertainty(self, observation: dict[str, np.ndarray]) -> float:
+        """Estimate uncertainty via MC Dropout (multiple stochastic forward passes)."""
+        try:
+            policy = self._model.policy
+            extractor = getattr(policy, "features_extractor", None)
+            if extractor is None or self._uncertainty_n_samples <= 1:
+                return 0.0
+
+            was_training = extractor.training
+            extractor.train()  # Enable dropout
+
+            actions = []
+            for _ in range(self._uncertainty_n_samples):
+                with torch.no_grad():
+                    a, _ = self._model.predict(observation, deterministic=True)
+                    val = float(a[0]) if isinstance(a, np.ndarray) else float(a)
+                    actions.append(val)
+
+            if not was_training:
+                extractor.eval()
+
+            if len(actions) < 2:
+                return 0.0
+
+            # Uncertainty = std of MC predictions, clamped to [0, 1]
+            std = float(np.std(actions))
+            return min(1.0, std / 0.5)  # Normalize: std=0.5 → uncertainty=1.0
+        except Exception:
+            return 0.0
+
+    @staticmethod
+    def _compute_stop_mult(uncertainty_score: float, regime: str) -> float:
+        """Compute recommended ATR multiplier for stop-loss based on regime + uncertainty."""
+        base_mult = {
+            "trending": 1.5,
+            "mean_reverting": 3.0,
+            "volatile": 4.0,
+            "flat": 2.5,
+        }
+        mult = base_mult.get(regime, 2.5)
+        # Higher uncertainty → wider stop
+        mult *= (1.0 + 0.5 * uncertainty_score)
+        return mult
 
 
 @dataclass
@@ -229,8 +287,10 @@ class MTFSignalGenerator:
         self,
         model_path: str | Path,
         device: str = "cpu",
+        uncertainty_n_samples: int = 10,
     ) -> None:
         self._device = device
+        self._uncertainty_n_samples = uncertainty_n_samples
 
         logger.info("Loading MTF model", path=str(model_path))
         self._model = SAC.load(str(model_path), device=device)
@@ -269,6 +329,11 @@ class MTFSignalGenerator:
         elif regime_features[4] > 0.5:
             regime = "mean_reverting"
 
+        # Compute uncertainty via MC Dropout
+        uncertainty_score = self._compute_uncertainty(observation)
+        position_scale = max(0.1, 1.0 - 0.5 * uncertainty_score)
+        stop_mult = SignalGenerator._compute_stop_mult(uncertainty_score, regime)
+
         signal = MTFTradingSignal(
             action=action_value,
             confidence=abs(action_value),
@@ -281,6 +346,9 @@ class MTFSignalGenerator:
             timestamp=datetime.now(timezone.utc),
             inference_time_ms=inference_ms,
             variable_importance=self._hook.variable_importance,
+            uncertainty_score=uncertainty_score,
+            position_scale=position_scale,
+            recommended_stop_atr_mult=stop_mult,
         )
 
         tf_str = "/".join(f"{w:.2f}" for w in self._hook.tf_attention_weights)
@@ -289,7 +357,37 @@ class MTFSignalGenerator:
             action=round(signal.action, 4),
             tf_attention=tf_str,
             regime=signal.regime,
+            uncertainty=round(uncertainty_score, 4),
             inference_ms=round(inference_ms, 2),
         )
 
         return signal
+
+    def _compute_uncertainty(self, observation: dict[str, np.ndarray]) -> float:
+        """Estimate uncertainty via MC Dropout (multiple stochastic forward passes)."""
+        try:
+            policy = self._model.policy
+            extractor = getattr(policy, "features_extractor", None)
+            if extractor is None or self._uncertainty_n_samples <= 1:
+                return 0.0
+
+            was_training = extractor.training
+            extractor.train()
+
+            actions = []
+            for _ in range(self._uncertainty_n_samples):
+                with torch.no_grad():
+                    a, _ = self._model.predict(observation, deterministic=True)
+                    val = float(a[0]) if isinstance(a, np.ndarray) else float(a)
+                    actions.append(val)
+
+            if not was_training:
+                extractor.eval()
+
+            if len(actions) < 2:
+                return 0.0
+
+            std = float(np.std(actions))
+            return min(1.0, std / 0.5)
+        except Exception:
+            return 0.0

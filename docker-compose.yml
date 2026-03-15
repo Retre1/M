@@ -1,0 +1,84 @@
+# =============================================================================
+# ApexFX Quantum — Docker Compose
+# Services: engine (trading bot), dashboard (web UI)
+# =============================================================================
+
+version: "3.9"
+
+services:
+  # --- Trading Engine ---
+  engine:
+    build:
+      context: .
+      target: app
+    container_name: apexfx-engine
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - PYTHONPATH=/app/src
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./logs:/app/logs
+      - ./configs:/app/configs
+    command: ["python3", "scripts/live_trade.py"]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import apexfx; print('ok')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: "2.0"
+
+  # --- Dashboard (Web UI) ---
+  dashboard:
+    build:
+      context: .
+      target: app
+    container_name: apexfx-dashboard
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - DASH_HOST=0.0.0.0
+      - DASH_PORT=8050
+      - DASH_DEBUG=false
+      - PYTHONPATH=/app/src
+    volumes:
+      - ./data:/app/data:ro
+      - ./models:/app/models:ro
+      - ./logs:/app/logs:ro
+    ports:
+      - "${DASH_PORT:-8050}:8050"
+    command: ["python3", "scripts/launch_dashboard.py"]
+    depends_on:
+      engine:
+        condition: service_healthy
+
+# --- GPU variant (uncomment to enable) ---
+#  engine-gpu:
+#    build:
+#      context: .
+#      target: gpu-base
+#      dockerfile: Dockerfile
+#    container_name: apexfx-engine-gpu
+#    restart: unless-stopped
+#    env_file: .env
+#    environment:
+#      - NVIDIA_VISIBLE_DEVICES=all
+#      - PYTHONPATH=/app/src
+#    volumes:
+#      - ./data:/app/data
+#      - ./models:/app/models
+#      - ./logs:/app/logs
+#      - ./configs:/app/configs
+#    deploy:
+#      resources:
+#        reservations:
+#          devices:
+#            - driver: nvidia
+#              count: 1
+#              capabilities: [gpu]

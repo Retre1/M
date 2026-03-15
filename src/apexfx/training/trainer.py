@@ -238,11 +238,55 @@ class Trainer:
             json.dump(data, fp, indent=2)
         logger.info("Walk-forward results saved", path=str(results_path))
 
+    def _merge_intermarket(self, bars: pd.DataFrame, timeframe: str = "H1") -> pd.DataFrame:
+        """Merge intermarket data (DXY, Gold, US10Y, SPX) into bars DataFrame.
+
+        This enables IntermarketCorrExtractor to compute real correlation
+        features instead of returning NaN.
+        """
+        intermarket_symbols = self._config.symbols.intermarket
+        if not intermarket_symbols:
+            return bars
+
+        try:
+            from apexfx.data.intermarket import IntermarketDataProvider
+            provider = IntermarketDataProvider()  # No MT5 in training — uses fallback
+
+            # Try loading cached intermarket data from Parquet
+            from pathlib import Path
+            data_dir = Path(self._config.base.paths.data_dir) / "processed"
+
+            merged = bars.copy()
+            for instrument in intermarket_symbols:
+                parquet_path = data_dir / instrument / timeframe / "data.parquet"
+                if parquet_path.exists():
+                    idf = pd.read_parquet(parquet_path)
+                    if "close" in idf.columns and "time" in idf.columns:
+                        idf = idf[["time", "close"]].rename(
+                            columns={"close": f"{instrument}_close"}
+                        )
+                        merged = merged.merge(idf, on="time", how="left")
+                        logger.debug(
+                            "Intermarket data merged for training",
+                            instrument=instrument,
+                            n_matched=merged[f"{instrument}_close"].notna().sum(),
+                        )
+
+            merged = merged.ffill()
+            return merged
+
+        except Exception as e:
+            logger.debug("Intermarket merge skipped in training", error=str(e))
+            return bars
+
     def _train_single_tf_stage(self, stage_data) -> None:
         """Train a single-timeframe stage (original behavior)."""
+        # Merge intermarket data before feature computation
+        bars_with_intermarket = self._merge_intermarket(stage_data.data, "H1")
+
         # Compute features
-        logger.info("Computing features", n_bars=len(stage_data.data))
-        features = self._feature_pipeline.compute(stage_data.data)
+        logger.info("Computing features", n_bars=len(bars_with_intermarket))
+        features = self._feature_pipeline.compute(bars_with_intermarket)
 
         # Feature selection: fit on first stage, reuse on subsequent
         if not self._feature_selector._is_fitted:
@@ -280,16 +324,21 @@ class Trainer:
 
     def _train_mtf_stage(self, stage_data: MTFStageData) -> None:
         """Train a multi-timeframe stage."""
+        # Merge intermarket data for each timeframe
+        d1_data = self._merge_intermarket(stage_data.d1_data, "D1")
+        h1_data = self._merge_intermarket(stage_data.h1_data, "H1")
+        m5_data = self._merge_intermarket(stage_data.m5_data, "M5")
+
         # Compute features for each timeframe
         logger.info("Computing MTF features (D1, H1, M5)")
 
-        d1_features = self._feature_pipeline.compute(stage_data.d1_data)
+        d1_features = self._feature_pipeline.compute(d1_data)
         logger.info("D1 features ready", n_bars=len(d1_features))
 
-        h1_features = self._feature_pipeline.compute(stage_data.h1_data)
+        h1_features = self._feature_pipeline.compute(h1_data)
         logger.info("H1 features ready", n_bars=len(h1_features))
 
-        m5_features = self._feature_pipeline.compute(stage_data.m5_data)
+        m5_features = self._feature_pipeline.compute(m5_data)
         logger.info("M5 features ready", n_bars=len(m5_features))
 
         # Feature selection: fit on H1 (primary timeframe), apply to all
@@ -336,6 +385,7 @@ class Trainer:
         risk_cfg = self._config.risk
         adv_cfg = self._config.training.adversarial
         tc_cfg = self._config.training.temporal_commitment
+        aug_cfg = self._config.training.augmentation
         n_envs = self._n_envs
 
         def make_env_fn(rank: int):
@@ -375,6 +425,11 @@ class Trainer:
                         warmup_steps=adv_cfg.warmup_steps,
                         adversarial_prob=adv_cfg.adversarial_prob,
                     )
+
+                # Data augmentation: time warp, magnitude warp, window slice, mixup
+                if aug_cfg.enabled:
+                    from apexfx.training.augmentation import AugmentedObsWrapper
+                    env = AugmentedObsWrapper(env, aug_cfg)
 
                 env = MonitorWrapper(env)
                 env = NormalizeReward(env)
@@ -605,6 +660,7 @@ class Trainer:
         mtf_cfg = self._config.model.mtf
         adv_cfg = self._config.training.adversarial
         tc_cfg = self._config.training.temporal_commitment
+        aug_cfg = self._config.training.augmentation
         n_envs = self._n_envs
 
         def make_env_fn(rank: int):
@@ -644,6 +700,11 @@ class Trainer:
                         warmup_steps=adv_cfg.warmup_steps,
                         adversarial_prob=adv_cfg.adversarial_prob,
                     )
+
+                # Data augmentation: time warp, magnitude warp, window slice, mixup
+                if aug_cfg.enabled:
+                    from apexfx.training.augmentation import AugmentedObsWrapper
+                    env = AugmentedObsWrapper(env, aug_cfg)
 
                 env = MonitorWrapper(env)
                 env = NormalizeReward(env)
@@ -869,18 +930,23 @@ class Trainer:
             )
 
         # Prioritized Experience Replay
-        callbacks.append(
-            PERCallback(
-                alpha=0.6,
-                beta_start=0.4,
-                beta_frames=sum(
+        per_cfg = self._config.training.per
+        if per_cfg.enabled:
+            beta_frames = per_cfg.beta_annealing_steps
+            if beta_frames <= 0:
+                beta_frames = sum(
                     s.total_timesteps for s in self._config.training.curriculum.stages
-                ),
-                update_freq=100,
-                batch_size=self._config.model.rl.batch_size,
+                )
+            callbacks.append(
+                PERCallback(
+                    alpha=per_cfg.alpha,
+                    beta_start=per_cfg.beta_start,
+                    beta_frames=beta_frames,
+                    update_freq=per_cfg.update_freq,
+                    batch_size=self._config.model.rl.batch_size,
+                )
             )
-        )
-        logger.info("PER enabled", alpha=0.6, beta_start=0.4)
+            logger.info("PER enabled", alpha=per_cfg.alpha, beta_start=per_cfg.beta_start)
 
         return CallbackList(callbacks)
 

@@ -246,7 +246,7 @@ class SentimentExtractor(BaseFeatureExtractor):
             sentiment_surprise,
         ], dtype=np.float32)
 
-    def extract(self, data: pd.DataFrame) -> pd.DataFrame:
+    def extract(self, data: pd.DataFrame, ticks: pd.DataFrame | None = None) -> pd.DataFrame:
         """For backtesting: returns neutral features (no historical headlines).
 
         In backtesting mode, all sentiment features are 0.0 since we don't

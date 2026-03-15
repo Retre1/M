@@ -254,6 +254,22 @@ class Executor:
             message=f"Order failed after {self._config.retry.max_retries} retries",
         )
 
+    async def close_all(self) -> ExecutionResult:
+        """Public method: close the entire current position."""
+        return await self._close_position()
+
+    async def reduce_position(self, fraction: float = 0.5) -> ExecutionResult:
+        """Public method: reduce current position by a fraction.
+
+        Args:
+            fraction: Fraction to close (0.5 = close half).
+        """
+        if self._current_position_volume <= 0:
+            return ExecutionResult(success=True, action_taken="none", message="No position to reduce")
+        close_volume = self._current_position_volume * fraction
+        close_volume = max(close_volume, self._symbol_config.lot_step)
+        return await self._partial_close(close_volume)
+
     async def _close_position(self) -> ExecutionResult:
         """Close the current position."""
         # Sync with MT5 before closing to avoid stale state
