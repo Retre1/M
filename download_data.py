@@ -165,10 +165,15 @@ def main():
     print("=" * 60)
     print()
 
-    # Initialize MT5
-    if not mt5.initialize():
+    # Initialize MT5 with explicit credentials
+    init_ok = mt5.initialize(
+        login=591316579,
+        server="FxPro-MT5 Demo",
+        password="asdjJLAsnd21#",
+    )
+    if not init_ok:
         print(f"ERROR: MT5 init failed: {mt5.last_error()}")
-        print("Make sure MetaTrader 5 is running and logged in!")
+        print("Make sure MetaTrader 5 is running!")
         sys.exit(1)
 
     info = mt5.terminal_info()
