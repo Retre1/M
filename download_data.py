@@ -11,10 +11,18 @@ Downloads:
     - Intermarket: DXY, SPX, US10Y via yfinance
 """
 
+import os
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+
+# Load .env file if present
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # dotenv not installed, use os.environ directly
 
 # ── Check MT5 available ──────────────────────────────────────────────
 try:
@@ -165,12 +173,27 @@ def main():
     print("=" * 60)
     print()
 
-    # Initialize MT5 with explicit credentials and path
+    # Read credentials from environment / .env file
+    mt5_path = os.getenv("MT5_PATH", r"C:\Program Files\MetaTrader 5\terminal64.exe")
+    mt5_login = os.getenv("MT5_LOGIN")
+    mt5_password = os.getenv("MT5_PASSWORD")
+    mt5_server = os.getenv("MT5_SERVER")
+
+    if not all([mt5_login, mt5_password, mt5_server]):
+        print("ERROR: MT5 credentials not set.")
+        print("Create a .env file with:")
+        print("  MT5_PATH=C:\\Program Files\\MetaTrader 5\\terminal64.exe")
+        print("  MT5_LOGIN=your_account_number")
+        print("  MT5_PASSWORD=your_password")
+        print("  MT5_SERVER=YourBroker-Demo")
+        sys.exit(1)
+
+    # Initialize MT5
     init_ok = mt5.initialize(
-        path=r"C:\Program Files\MetaTrader 5\terminal64.exe",
-        login=591316579,
-        server="FxPro-MT5 Demo",
-        password="asdjJLAsnd21#",
+        path=mt5_path,
+        login=int(mt5_login),
+        server=mt5_server,
+        password=mt5_password,
     )
     if not init_ok:
         print(f"ERROR: MT5 init failed: {mt5.last_error()}")
