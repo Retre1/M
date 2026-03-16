@@ -165,8 +165,9 @@ def main():
     print("=" * 60)
     print()
 
-    # Initialize MT5 with explicit credentials
+    # Initialize MT5 with explicit credentials and path
     init_ok = mt5.initialize(
+        path=r"C:\Program Files\MetaTrader 5\terminal64.exe",
         login=REDACTED_LOGIN,
         server="FxPro-MT5 Demo",
         password="REDACTED_PASSWORD",
