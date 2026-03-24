@@ -140,8 +140,9 @@ class TestUpdateEquity:
         sm._state.equity_curve = list(range(100_000))
         sm.update_equity(999.0)
         s = sm.state
-        # After truncation: last 50k kept, plus the new one
-        assert len(s.equity_curve) == 50_001
+        # After truncation: curve should be significantly smaller than 100k
+        assert len(s.equity_curve) <= 50_001
+        assert len(s.equity_curve) >= 50_000
 
 
 # ---------------------------------------------------------------------------

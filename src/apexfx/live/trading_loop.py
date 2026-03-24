@@ -26,6 +26,7 @@ from apexfx.live.shadow_trader import GradualRollout, ShadowTrader
 from apexfx.live.signal_generator import MTFSignalGenerator, SignalGenerator
 from apexfx.live.state_manager import StateManager
 from apexfx.risk.risk_manager import MarketState, RiskManager
+from apexfx.training.model_registry import ModelRegistry
 from apexfx.utils.logging import get_logger
 from apexfx.utils.math_utils import atr
 from apexfx.utils import prometheus as prom
@@ -171,6 +172,9 @@ class LiveTradingLoop:
                 )
             except Exception as e:
                 logger.warning("Live online learner init failed", error=str(e))
+
+        # --- Model version registry for promotion tracking & rollback ---
+        self._model_registry = ModelRegistry()
 
         # --- TIER 1: Regime transition tracking ---
         self._prev_regime: str | None = None
@@ -950,6 +954,11 @@ class LiveTradingLoop:
                                 self._previous_model_path = prev_model_path
                                 self._current_model_path = result.model_path
                                 self._model_version = getattr(self, "_model_version", 0) + 1
+                                # Persist promotion in model registry
+                                self._model_registry.register(
+                                    model_path=result.model_path,
+                                    validation_sharpe=result.validation_sharpe,
+                                )
                                 logger.info(
                                     "Model updated via online learning",
                                     version=self._model_version,
@@ -964,6 +973,36 @@ class LiveTradingLoop:
                 logger.error("Online learning error", error=str(e))
 
             await asyncio.sleep(self._online_learning_interval_s)
+
+    def rollback_model(self, to_version_id: int | None = None) -> None:
+        """Roll back to a previous model version and reload the signal generator.
+
+        If *to_version_id* is ``None``, rolls back to the version immediately
+        before the current active one.
+        """
+        if to_version_id is None:
+            history = self._model_registry.get_history(limit=2)
+            if len(history) < 2:
+                logger.error("No previous model version to roll back to")
+                return
+            # history[0] is current active, history[1] is previous
+            to_version_id = history[1].version_id
+
+        version = self._model_registry.rollback(to_version_id)
+        try:
+            self._signal_gen = SignalGenerator(version.model_path, device="cpu")
+            self._current_model_path = version.model_path
+            logger.info(
+                "Model rolled back and reloaded",
+                version_id=version.version_id,
+                model_path=version.model_path,
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to reload rolled-back model",
+                version_id=version.version_id,
+                error=str(e),
+            )
 
     async def _news_consumer_loop(self) -> None:
         """Consume headlines from RealtimeNewsStream queue in real-time.
