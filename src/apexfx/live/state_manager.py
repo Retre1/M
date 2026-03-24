@@ -361,7 +361,10 @@ class StateManager:
             self._state.equity = data["equity"]
             self._state.unrealized_pnl = data["unrealized_pnl"]
             self._state.peak_equity = max(self._state.peak_equity, data["equity"])
-            dd = (self._state.peak_equity - data["equity"]) / self._state.peak_equity
+            if self._state.peak_equity > 0:
+                dd = (self._state.peak_equity - data["equity"]) / self._state.peak_equity
+            else:
+                dd = 0.0
             self._state.max_drawdown = max(self._state.max_drawdown, dd)
             self._state.equity_curve.append(data["equity"])
             self._state.last_update = entry.timestamp

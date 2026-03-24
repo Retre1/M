@@ -1,0 +1,35 @@
+# =============================================================================
+# ApexFX Staging Override — DEMO ACCOUNT / PAPER TRADING
+#
+# This config is loaded ON TOP of base configs when APEXFX_ENV=staging.
+# Same structure as production but with relaxed limits for testing.
+# =============================================================================
+
+# --- Override base ---
+logging:
+  level: DEBUG
+  format: console
+
+# --- Risk (relaxed for testing) ---
+risk:
+  daily_var_limit: 0.05           # 5% — wider for testing strategies
+  max_drawdown_pct: 0.10          # 10% — more room for testing
+
+  position_sizing:
+    max_position_pct: 0.10
+    kelly_fraction: 0.5
+    min_trades_for_kelly: 10
+
+  cooldown:
+    after_n_losses: 5
+    duration_minutes: 15
+
+# --- Dashboard ---
+dashboard:
+  debug: true
+  host: "0.0.0.0"                 # OK for local dev
+
+# --- Alerts (optional in staging) ---
+alerts:
+  enabled: false
+  telegram_enabled: false

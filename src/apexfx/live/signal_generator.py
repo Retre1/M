@@ -76,8 +76,8 @@ class _HiveMindHook:
                 if vi.dim() > 1:
                     vi = vi.mean(dim=0)
                 self.variable_importance = vi.numpy().tolist()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("HiveMind action extraction failed", error=str(e))
 
 
 class SignalGenerator:
@@ -211,7 +211,8 @@ class SignalGenerator:
             # Uncertainty = std of MC predictions, clamped to [0, 1]
             std = float(np.std(actions))
             return min(1.0, std / 0.5)  # Normalize: std=0.5 → uncertainty=1.0
-        except Exception:
+        except Exception as e:
+            logger.debug("MC uncertainty estimation failed", error=str(e))
             return 0.0
 
     @staticmethod
@@ -271,8 +272,8 @@ class _MTFHiveMindHook:
                 if vi.dim() > 1:
                     vi = vi.mean(dim=0)
                 self.variable_importance = vi.numpy().tolist()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("HiveMind action extraction failed", error=str(e))
 
 
 class MTFSignalGenerator:
@@ -388,5 +389,6 @@ class MTFSignalGenerator:
 
             std = float(np.std(actions))
             return min(1.0, std / 0.5)
-        except Exception:
+        except Exception as e:
+            logger.debug("MC uncertainty estimation failed", error=str(e))
             return 0.0

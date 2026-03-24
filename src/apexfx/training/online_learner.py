@@ -262,7 +262,8 @@ class OnlineLearner:
         from stable_baselines3 import SAC
         try:
             model = SAC.load(model_path)
-        except Exception:
+        except Exception as e:
+            logger.error("Failed to load model for evaluation", path=str(model_path), error=str(e))
             return -999.0
 
         obs, info = env.reset()

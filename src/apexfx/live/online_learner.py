@@ -244,8 +244,8 @@ class LiveOnlineLearner:
                 infos = [{}]
 
                 buf.add(obs_arr, next_obs_arr, action_arr, reward_arr, done_arr, infos)
-            except Exception:
-                pass  # Skip malformed transitions
+            except Exception as e:
+                logger.debug("Skipping malformed transition", error=str(e))
 
     def _apply_ewc_penalty(self) -> None:
         """Apply EWC penalty after gradient steps to prevent forgetting."""

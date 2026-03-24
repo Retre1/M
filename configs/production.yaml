@@ -1,0 +1,45 @@
+# =============================================================================
+# ApexFX Production Override — REAL CAPITAL
+#
+# This config is loaded ON TOP of base configs when APEXFX_ENV=production.
+# It tightens risk limits and enables maximum safety.
+# =============================================================================
+
+# --- Override base ---
+logging:
+  level: WARNING
+  format: json
+
+# --- Override risk.yaml (tighter limits for real money) ---
+risk:
+  daily_var_limit: 0.015          # 1.5% of portfolio (was 2%)
+  max_drawdown_pct: 0.03          # 3% hard stop (was 5%)
+  var_confidence: 0.99
+
+  position_sizing:
+    max_position_pct: 0.05        # 5% max (was 10%)
+    kelly_fraction: 0.25          # Quarter-Kelly (was half)
+    min_trades_for_kelly: 50      # Need 50 trades (was 30)
+
+  cooldown:
+    after_n_losses: 2             # 2 losses → cooldown (was 3)
+    duration_minutes: 120         # 2-hour cooldown (was 1 hour)
+    tilt_drawdown_pct: 0.015
+    tilt_window_minutes: 20
+
+# --- Override execution ---
+execution:
+  max_slippage_pips: 2.0          # Tighter slippage tolerance
+  max_retry_attempts: 5
+  retry_delay_s: 1.0
+
+# --- Dashboard ---
+dashboard:
+  debug: false
+  host: "127.0.0.1"
+
+# --- Alerts (required in production) ---
+alerts:
+  enabled: true
+  telegram_enabled: true
+  cooldown_minutes: 5

@@ -43,10 +43,24 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
-def load_yaml(path: str | Path) -> dict:
-    """Load a single YAML file with env-var interpolation."""
+# Config files that MUST exist in production to avoid silent defaults
+_CRITICAL_CONFIGS = {"risk.yaml", "execution.yaml", "symbols.yaml"}
+
+
+def load_yaml(path: str | Path, required: bool = False) -> dict:
+    """Load a single YAML file with env-var interpolation.
+
+    Args:
+        path: Path to YAML file.
+        required: If True, raise FileNotFoundError when file is missing.
+    """
     path = Path(path)
     if not path.exists():
+        if required:
+            raise FileNotFoundError(
+                f"Required config file missing: {path}. "
+                f"Copy from configs/ templates or create it."
+            )
         return {}
     with open(path) as f:
         raw = yaml.safe_load(f) or {}
@@ -54,19 +68,26 @@ def load_yaml(path: str | Path) -> dict:
 
 
 def load_config(config_dir: str | Path = "configs") -> AppConfig:
-    """
-    Load all YAML config files from the directory and merge them
+    """Load all YAML config files from the directory and merge them
     into a single validated AppConfig.
+
+    Respects APEXFX_ENV environment variable to load environment-specific
+    overrides (e.g., configs/production.yaml, configs/staging.yaml).
+
+    In production mode, critical config files (risk, execution, symbols)
+    must exist — missing files cause a hard error instead of silent defaults.
     """
     config_dir = Path(config_dir)
+    env = os.environ.get("APEXFX_ENV", "").lower()
+    is_production = env == "production"
 
     base = load_yaml(config_dir / "base.yaml")
-    symbols = load_yaml(config_dir / "symbols.yaml")
+    symbols = load_yaml(config_dir / "symbols.yaml", required=is_production)
     data = load_yaml(config_dir / "data.yaml")
     model = load_yaml(config_dir / "model.yaml")
     training = load_yaml(config_dir / "training.yaml")
-    risk = load_yaml(config_dir / "risk.yaml")
-    execution = load_yaml(config_dir / "execution.yaml")
+    risk = load_yaml(config_dir / "risk.yaml", required=is_production)
+    execution = load_yaml(config_dir / "execution.yaml", required=is_production)
     dashboard = load_yaml(config_dir / "dashboard.yaml")
 
     merged = {
@@ -79,5 +100,11 @@ def load_config(config_dir: str | Path = "configs") -> AppConfig:
         "execution": execution,
         "dashboard": dashboard,
     }
+
+    # Apply environment-specific overrides (production.yaml / staging.yaml)
+    if env:
+        env_overrides = load_yaml(config_dir / f"{env}.yaml")
+        if env_overrides:
+            merged = _deep_merge(merged, env_overrides)
 
     return AppConfig.model_validate(merged)
