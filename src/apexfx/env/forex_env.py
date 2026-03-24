@@ -22,7 +22,12 @@ import pandas as pd
 from gymnasium import spaces
 
 from apexfx.env.obs_builder import ObservationBuilder
-from apexfx.env.reward import BaseRewardFunction, HoldAwareReward, QuantumZScoreReward, TradingReward
+from apexfx.env.reward import (
+    BaseRewardFunction,
+    HoldAwareReward,
+    QuantumZScoreReward,
+    TradingReward,
+)
 
 
 class SpreadModel:
@@ -453,10 +458,7 @@ class ForexTradingEnv(gym.Env):
         self._action_queue.append(action_value)
         if self._current_idx < len(self._data):
             # Set Z-Score for reward before execution
-            if isinstance(self._reward_fn, QuantumZScoreReward):
-                z_score = self._get_current_zscore()
-                self._reward_fn.set_zscore(z_score)
-            elif isinstance(self._reward_fn, HoldAwareReward):
+            if isinstance(self._reward_fn, QuantumZScoreReward) or isinstance(self._reward_fn, HoldAwareReward):
                 z_score = self._get_current_zscore()
                 self._reward_fn.set_zscore(z_score)
 
@@ -489,9 +491,7 @@ class ForexTradingEnv(gym.Env):
                 if "structure_break_bull" in row.index and "structure_break_bear" in row.index:
                     bull_break = float(row.get("structure_break_bull", 0)) > 0.5
                     bear_break = float(row.get("structure_break_bear", 0)) > 0.5
-                    if self._position_direction > 0 and bull_break:
-                        structure_aligned = True
-                    elif self._position_direction < 0 and bear_break:
+                    if self._position_direction > 0 and bull_break or self._position_direction < 0 and bear_break:
                         structure_aligned = True
 
             self._reward_fn.set_trade_info(

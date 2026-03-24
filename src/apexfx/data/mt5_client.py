@@ -8,7 +8,6 @@ from datetime import datetime
 from enum import IntEnum
 from typing import Any
 
-import numpy as np
 import pandas as pd
 
 from apexfx.utils.logging import get_logger
@@ -171,6 +170,21 @@ class MT5Client:
 
         df = pd.DataFrame(ticks)
         df["time"] = pd.to_datetime(df["time"], unit="s", utc=True)
+
+        # Validate tick data: reject zero/negative prices and NaN
+        pre_len = len(df)
+        if "bid" in df.columns and "ask" in df.columns:
+            df = df[
+                (df["bid"] > 0) & (df["ask"] > 0) & (df["ask"] >= df["bid"])
+            ].copy()
+            df = df.dropna(subset=["bid", "ask"])
+        if len(df) < pre_len:
+            logger.warning(
+                "Dropped invalid ticks",
+                symbol=symbol,
+                dropped=pre_len - len(df),
+            )
+
         return df
 
     def get_ticks_range(
@@ -211,6 +225,25 @@ class MT5Client:
 
         df = pd.DataFrame(rates)
         df["time"] = pd.to_datetime(df["time"], unit="s", utc=True)
+
+        # Validate bar data integrity
+        pre_len = len(df)
+        df = df[
+            (df["open"] > 0)
+            & (df["high"] > 0)
+            & (df["low"] > 0)
+            & (df["close"] > 0)
+            & (df["high"] >= df["low"])
+            & (df["close"] >= df["low"])
+            & (df["close"] <= df["high"])
+        ].copy()
+        if len(df) < pre_len:
+            logger.warning(
+                "Dropped invalid bars",
+                symbol=symbol,
+                dropped=pre_len - len(df),
+            )
+
         return df
 
     def get_symbol_info(self, symbol: str) -> SymbolInfo:

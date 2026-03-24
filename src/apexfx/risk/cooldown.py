@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import deque
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from apexfx.utils.logging import get_logger
 
@@ -38,14 +38,14 @@ class CooldownManager:
         """Check if cooldown is currently in effect."""
         if self._cooldown_until is None:
             return False
-        return datetime.now(timezone.utc) < self._cooldown_until
+        return datetime.now(UTC) < self._cooldown_until
 
     @property
     def remaining(self) -> timedelta | None:
         """Time remaining in cooldown, or None if not active."""
         if not self.is_active or self._cooldown_until is None:
             return None
-        return self._cooldown_until - datetime.now(timezone.utc)
+        return self._cooldown_until - datetime.now(UTC)
 
     @property
     def consecutive_losses(self) -> int:
@@ -53,7 +53,7 @@ class CooldownManager:
 
     def record_trade(self, pnl: float) -> None:
         """Record a trade result and check for cooldown triggers."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         self._trade_results.append((now, pnl))
 
         if pnl < 0:
@@ -70,7 +70,7 @@ class CooldownManager:
 
     def record_portfolio_value(self, value: float) -> None:
         """Record portfolio value for tilt detection."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         self._portfolio_snapshots.append((now, value))
         self._check_tilt()
 
@@ -79,7 +79,7 @@ class CooldownManager:
         if len(self._portfolio_snapshots) < 2:
             return
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         cutoff = now - self._tilt_window
 
         # Find the portfolio value at the start of the tilt window
@@ -100,7 +100,7 @@ class CooldownManager:
 
     def _activate_cooldown(self, reason: str) -> None:
         """Activate the cooldown period."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         self._cooldown_until = now + self._duration
         self._consecutive_losses = 0
 

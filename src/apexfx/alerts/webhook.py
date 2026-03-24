@@ -120,7 +120,7 @@ class WebhookAlerter:
         }
 
     async def send(self, alert: Alert) -> bool:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._send_sync, alert)
 
     def _send_sync(self, alert: Alert) -> bool:

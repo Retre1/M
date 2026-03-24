@@ -18,6 +18,10 @@ def main() -> None:
     parser.add_argument("--timeframe", default="H1")
     parser.add_argument("--synthetic-only", action="store_true",
                         help="Use only synthetic data (no MT5 needed)")
+    parser.add_argument("--resume", action="store_true",
+                        help="Resume training from the latest checkpoint. "
+                             "Useful for free-tier platforms (Colab, Kaggle) "
+                             "with session time limits.")
     args = parser.parse_args()
 
     config = init_config(args.config_dir)
@@ -27,7 +31,11 @@ def main() -> None:
         log_file=config.base.logging.file,
     )
     logger = get_logger(__name__)
-    logger.info("Starting ApexFX Quantum training")
+
+    if args.resume:
+        logger.info("ApexFX Quantum training — RESUME mode")
+    else:
+        logger.info("Starting ApexFX Quantum training")
 
     # Load real data if available
     real_data = None
@@ -45,7 +53,7 @@ def main() -> None:
 
     # Run training
     trainer = Trainer(config, real_data=real_data)
-    trainer.train()
+    trainer.train(resume=args.resume)
 
     logger.info("Training complete")
 

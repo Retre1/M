@@ -1,0 +1,85 @@
+# ============================================================================
+# ApexFX Model Configuration — T4 16GB Lite
+#
+# Scaled down from production (2x4090) to fit T4:
+#   - d_model: 128 -> 64 (4x less VRAM for TFT)
+#   - batch_size: 2048 -> 512 (fits in 16GB)
+#   - buffer_size: 2M -> 500K (fits in ~12GB RAM)
+#   - net_arch: [512,512,256] -> [256,256,128]
+#
+# Estimated VRAM: ~6-8 GB (safe for T4 16GB)
+# Estimated params: ~1.5M
+# ============================================================================
+
+tft:
+  d_model: 64                 # 128->64: half capacity, half VRAM
+  n_heads: 4                  # 8->4
+  n_encoder_layers: 1         # 2->1: single layer for speed
+  n_decoder_layers: 1
+  dropout: 0.1
+  hidden_continuous_size: 32  # 64->32
+  attention_head_size: 16     # 32->16: matches d_model/n_heads
+  known_future_inputs:
+    - hour_sin
+    - hour_cos
+    - dow_sin
+    - dow_cos
+    - session_id
+
+agents:
+  trend:
+    hidden_sizes: [256, 128, 64]   # 50% smaller
+    activation: relu
+    dropout: 0.15
+
+  reversion:
+    hidden_sizes: [256, 128, 64]
+    activation: relu
+    dropout: 0.15
+    z_score_threshold: 3.0
+
+gating:
+  hidden_sizes: [128, 64]         # 50% smaller
+  n_agents: 3
+
+rl:
+  algorithm: TQC
+  gamma: 0.995
+  learning_rate: 0.0003           # Slightly higher LR — smaller model converges faster
+  buffer_size: 500000             # 2M->500K: fits in Colab RAM
+  batch_size: 512                 # 2048->512: fits T4 VRAM
+  ent_coef: auto
+  tau: 0.005
+  train_freq: 1
+  gradient_steps: 1               # 2->1: faster step time
+  learning_starts: 5000           # 10K->5K: start learning sooner
+  top_quantiles_to_drop: 2
+  n_quantiles: 25
+  use_cosine_lr: true
+
+# Multi-Timeframe — DISABLED for Colab (saves VRAM + compute)
+mtf:
+  enabled: false
+  lookback:
+    d1: 20
+    h1: 60
+    m5: 30
+  fusion:
+    dropout: 0.1
+  n_mtf_context: 4
+
+# MC Dropout
+uncertainty:
+  enabled: true
+  n_samples: 10                   # 20->10
+  uncertainty_weight: 0.5
+  min_position_scale: 0.1
+
+# Diversity — lighter
+diversity:
+  enabled: true
+  diversity_weight: 0.01
+  entropy_weight: 0.03
+  update_freq: 100                # Less frequent
+  batch_size: 256
+  lr: 0.0001

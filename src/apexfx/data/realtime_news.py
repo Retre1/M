@@ -23,9 +23,10 @@ import os
 import re
 import time
 from collections import deque
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Callable
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import Any
 
 from apexfx.config.schema import NewsConfig
 from apexfx.utils.logging import get_logger
@@ -222,7 +223,7 @@ class FinnhubWebSocket:
 
         return NewsHeadline(
             text=headline_text,
-            timestamp=datetime.fromtimestamp(publish_ts, tz=timezone.utc),
+            timestamp=datetime.fromtimestamp(publish_ts, tz=UTC),
             source="finnhub",
             category=category,
             url=item.get("url", ""),
@@ -293,7 +294,7 @@ class FastRSSPoller:
                 headers["If-Modified-Since"] = self._feed_last_modified[url]
 
             # Run blocking HTTP in thread pool
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             resp = await loop.run_in_executor(
                 None,
                 lambda: requests.get(url, timeout=8, headers=headers),
@@ -350,13 +351,13 @@ class FastRSSPoller:
             if not title:
                 continue
 
-            timestamp = datetime.now(timezone.utc)
+            timestamp = datetime.now(UTC)
             latency_ms = 0.0
             if date_match:
                 try:
                     from email.utils import parsedate_to_datetime
                     dt = parsedate_to_datetime(date_match.group(1))
-                    timestamp = dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+                    timestamp = dt if dt.tzinfo else dt.replace(tzinfo=UTC)
                     latency_ms = (receive_time - timestamp.timestamp()) * 1000
                 except Exception:
                     pass

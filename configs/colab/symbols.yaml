@@ -1,0 +1,38 @@
+symbols:
+  EURUSD:
+    pip_value: 0.0001
+    spread_limit_pips: 2.0
+    lot_step: 0.01
+    contract_size: 100000
+    sessions:
+      tokyo: [0, 9]     # UTC hours
+      london: [7, 16]
+      new_york: [12, 21]
+      overlap_ln: [12, 16]  # London-NY overlap
+
+  GBPUSD:
+    pip_value: 0.0001
+    spread_limit_pips: 2.5
+    lot_step: 0.01
+    contract_size: 100000
+    sessions:
+      tokyo: [0, 9]
+      london: [7, 16]
+      new_york: [12, 21]
+      overlap_ln: [12, 16]
+
+  USDJPY:
+    pip_value: 0.01
+    spread_limit_pips: 2.0
+    lot_step: 0.01
+    contract_size: 100000
+    sessions:
+      tokyo: [0, 9]
+      london: [7, 16]
+      new_york: [12, 21]
+      overlap_ln: [12, 16]
+
+intermarket:
+  - DXY
+  - XAUUSD
+  - US10Y

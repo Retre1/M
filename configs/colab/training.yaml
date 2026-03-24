@@ -1,0 +1,99 @@
+# ============================================================================
+# ApexFX Training Configuration — Colab T4 Lite
+#
+# Total: 1.15M timesteps (vs 5M production)
+# Estimated time: ~30-40 hours on T4 (3-4 Colab sessions)
+#
+# Checkpoint every 25K steps (~15 min) — safe for Colab crashes
+# ============================================================================
+
+curriculum:
+  stages:
+    - name: real_warmup
+      description: "Filtered real data: extreme bars removed"
+      total_timesteps: 150000        # 500K->150K
+      data_source: real
+      filter_quantile: 0.95
+
+    - name: real_full
+      description: "Full real dataset — all market conditions"
+      total_timesteps: 500000        # 2M->500K
+      data_source: real
+      warm_start: true
+
+    - name: real_augmented
+      description: "Noise-augmented real data for robustness"
+      total_timesteps: 300000        # 1.5M->300K
+      data_source: real
+      augmentation:
+        noise_std: 0.003
+        price_shift_std: 0.002
+      warm_start: true
+
+    - name: real_adversarial
+      description: "Adversarial perturbations for hardening"
+      total_timesteps: 200000        # 1M->200K
+      data_source: real
+      augmentation:
+        noise_std: 0.005
+        price_shift_std: 0.003
+      warm_start: true
+
+walk_forward:
+  train_window_days: 252           # 504->252: 1 year (less data)
+  test_window_days: 63             # 126->63: 3 months
+  step_size_days: 63
+  n_folds: null
+  retrain_each_fold: true
+
+evaluation:
+  eval_freq: 10000                 # 25K->10K: more frequent for shorter runs
+  n_eval_episodes: 10              # 20->10
+  deterministic: true
+
+checkpointing:
+  save_freq: 25000                 # 100K->25K: frequent saves for Colab!
+  keep_best_n: 3
+
+early_stopping:
+  patience: 10                     # 15->10
+  min_delta: 0.005
+
+# EWC — same settings, works fine on T4
+ewc:
+  enabled: true
+  lambda_ewc: 5000.0
+  gamma_ewc: 0.9
+  fisher_n_samples: 2000           # 5000->2000: faster Fisher computation
+  update_freq: 10
+  lr: 0.0001
+
+# Adversarial — lighter
+adversarial:
+  enabled: true
+  noise_std: 0.01
+  noise_schedule: cosine
+  decay_steps: 500000              # 2M->500K
+  warmup_steps: 2000
+  adversarial_prob: 0.5
+  gradient_penalty_weight: 0.1
+  gradient_penalty_freq: 100       # 50->100: less frequent
+
+# World Model — DISABLED for Colab (saves VRAM)
+world_model:
+  enabled: false
+  d_latent: 32
+  d_hidden: 128
+  n_ensemble: 3
+  update_freq: 100
+  batch_size: 256
+  lr: 0.0003
+  curiosity_weight: 0.01
+  imagination_horizon: 3
+
+# Temporal Commitment
+temporal_commitment:
+  enabled: true
+  min_hold: 5
+  commitment_penalty: 0.1
+  action_smoothing_alpha: 0.3

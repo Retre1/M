@@ -14,8 +14,8 @@ Changes from original:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from dataclasses import dataclass
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import numpy as np
@@ -85,7 +85,7 @@ class DailyLossGuard:
     def update(self, current_equity: float) -> bool:
         """Update with current equity. Returns True if trading is allowed."""
         self._current_equity = current_equity
-        today = datetime.now(timezone.utc).date()
+        today = datetime.now(UTC).date()
 
         if self._current_date != today:
             self._day_start_equity = current_equity
@@ -148,10 +148,13 @@ class KillSwitch:
         try:
             self.KILL_FILE.parent.mkdir(parents=True, exist_ok=True)
             self.KILL_FILE.write_text(
-                f"{datetime.now(timezone.utc).isoformat()}: {reason}\n"
+                f"{datetime.now(UTC).isoformat()}: {reason}\n"
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(
+                "CRITICAL: Kill file write failed — kill switch is memory-only",
+                error=str(e),
+            )
 
     def record_rejection(self) -> None:
         self._consecutive_rejections += 1
@@ -242,7 +245,7 @@ class WeekendGapGuard:
             (should_block_new_trades, position_scale_factor)
         """
         if utc_now is None:
-            utc_now = datetime.now(timezone.utc)
+            utc_now = datetime.now(UTC)
 
         weekday = utc_now.weekday()  # Mon=0, Fri=4
         hour = utc_now.hour

@@ -15,9 +15,10 @@ Supports:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Callable, Protocol
+from datetime import UTC, datetime
+from typing import Protocol
 
 import numpy as np
 import pandas as pd
@@ -494,7 +495,7 @@ class BacktestEngine:
                 return ts.to_pydatetime()
             if isinstance(ts, datetime):
                 return ts
-        return datetime(2025, 1, 1, tzinfo=timezone.utc)
+        return datetime(2025, 1, 1, tzinfo=UTC)
 
 
 # ------------------------------------------------------------------

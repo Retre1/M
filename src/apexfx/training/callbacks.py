@@ -10,7 +10,6 @@ import torch
 from stable_baselines3.common.callbacks import BaseCallback
 
 from apexfx.utils.logging import get_logger
-from apexfx.utils.metrics import compute_all_metrics
 
 logger = get_logger(__name__)
 
@@ -61,7 +60,12 @@ class MetricsCallback(BaseCallback):
 
 
 class TradingCheckpointCallback(BaseCallback):
-    """Save model checkpoints at regular intervals, keeping the best N."""
+    """Save model checkpoints at regular intervals, keeping the best N.
+
+    When a CheckpointManager and stage context are provided, saves full
+    resumable state bundles (model + EWC + feature selector + metadata).
+    Otherwise falls back to simple model-only saves.
+    """
 
     def __init__(
         self,
@@ -69,12 +73,24 @@ class TradingCheckpointCallback(BaseCallback):
         save_dir: str = "models/checkpoints",
         keep_best_n: int = 3,
         verbose: int = 0,
+        checkpoint_manager=None,
+        stage_idx: int = 0,
+        stage_name: str = "",
+        stage_total_timesteps: int = 0,
+        ewc_regularizer=None,
+        feature_selector_state: dict | None = None,
     ) -> None:
         super().__init__(verbose)
         self._save_freq = save_freq
         self._save_dir = Path(save_dir)
         self._keep_best_n = keep_best_n
         self._best_scores: list[tuple[float, str]] = []
+        self._ckpt_mgr = checkpoint_manager
+        self._stage_idx = stage_idx
+        self._stage_name = stage_name
+        self._stage_total_timesteps = stage_total_timesteps
+        self._ewc_reg = ewc_regularizer
+        self._fs_state = feature_selector_state
 
     def _on_step(self) -> bool:
         if self.num_timesteps % self._save_freq == 0:
@@ -82,10 +98,28 @@ class TradingCheckpointCallback(BaseCallback):
         return True
 
     def _save_checkpoint(self) -> None:
-        self._save_dir.mkdir(parents=True, exist_ok=True)
-        path = self._save_dir / f"model_step_{self.num_timesteps}"
-        self.model.save(str(path))
-        logger.info("Checkpoint saved", path=str(path), step=self.num_timesteps)
+        if self._ckpt_mgr is not None:
+            # Full resumable checkpoint
+            remaining = max(0, self._stage_total_timesteps - self.num_timesteps)
+            ewc_state = None
+            if self._ewc_reg is not None and self._ewc_reg.has_fisher:
+                ewc_state = self._ewc_reg.state_dict()
+
+            self._ckpt_mgr.save(
+                self.model,
+                stage_idx=self._stage_idx,
+                total_timesteps_done=self.num_timesteps,
+                remaining_timesteps=remaining,
+                stage_name=self._stage_name,
+                ewc_state=ewc_state,
+                feature_selector_state=self._fs_state,
+            )
+        else:
+            # Simple fallback
+            self._save_dir.mkdir(parents=True, exist_ok=True)
+            path = self._save_dir / f"model_step_{self.num_timesteps}"
+            self.model.save(str(path))
+            logger.info("Checkpoint saved", path=str(path), step=self.num_timesteps)
 
 
 class EarlyStoppingCallback(BaseCallback):

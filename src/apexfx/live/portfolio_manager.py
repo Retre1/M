@@ -14,7 +14,7 @@ Usage
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import numpy as np
 
@@ -131,7 +131,7 @@ class PositionInfo:
     volume: float           # lots
     entry_price: float
     notional: float         # direction * volume * contract_size * entry_price
-    open_time: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    open_time: datetime = field(default_factory=lambda: datetime.now(UTC))
     unrealized_pnl: float = 0.0
 
 

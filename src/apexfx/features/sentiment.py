@@ -10,8 +10,7 @@ News sentiment drives 30-40% of high-impact FX moves. This extractor:
 from __future__ import annotations
 
 import math
-from datetime import datetime, timezone
-from typing import Any
+from datetime import UTC, datetime
 
 import numpy as np
 import pandas as pd
@@ -115,12 +114,12 @@ class SentimentExtractor(BaseFeatureExtractor):
         """
         for h in headlines:
             text = h.get("text", "")
-            ts = h.get("timestamp", datetime.now(timezone.utc))
+            ts = h.get("timestamp", datetime.now(UTC))
             if isinstance(ts, str):
                 try:
                     ts = datetime.fromisoformat(ts)
                 except ValueError:
-                    ts = datetime.now(timezone.utc)
+                    ts = datetime.now(UTC)
 
             score, magnitude = self._score_headline(text)
 
@@ -182,7 +181,7 @@ class SentimentExtractor(BaseFeatureExtractor):
         if not self._headlines:
             return np.zeros(6)
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # Time-decay weighted scores
         scores = []
@@ -192,9 +191,9 @@ class SentimentExtractor(BaseFeatureExtractor):
         for h in self._headlines:
             ts = h["timestamp"]
             if not isinstance(ts, datetime):
-                ts = datetime.now(timezone.utc)
+                ts = datetime.now(UTC)
             if ts.tzinfo is None:
-                ts = ts.replace(tzinfo=timezone.utc)
+                ts = ts.replace(tzinfo=UTC)
 
             hours_ago = (now - ts).total_seconds() / 3600.0
             weight = math.exp(-0.693 * hours_ago / self._decay_hours)  # Half-life decay

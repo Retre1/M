@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import numpy as np
 
@@ -66,7 +66,7 @@ class FillTracker:
             slippage = -slippage  # Positive slippage = worse for us
 
         record = FillRecord(
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             symbol=symbol,
             direction=direction,
             expected_price=expected_price,

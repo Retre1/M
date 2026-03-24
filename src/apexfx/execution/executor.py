@@ -12,7 +12,7 @@ from apexfx.execution.fill_tracker import FillTracker
 from apexfx.execution.liquidity_guard import LiquidityGuard
 from apexfx.execution.order_manager import OrderManager
 from apexfx.execution.smart_exec import SmartRouter
-from apexfx.risk.risk_manager import KillSwitch, MarketState, RiskDecision
+from apexfx.risk.risk_manager import KillSwitch, RiskDecision
 from apexfx.utils.logging import get_logger
 
 logger = get_logger(__name__)

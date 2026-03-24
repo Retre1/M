@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import numpy as np
 import pandas as pd
@@ -112,7 +112,7 @@ class TickCollector:
     async def _poll_ticks(self) -> None:
         """Poll MT5 for new ticks."""
         try:
-            from_dt = self._last_tick_time or datetime.now(timezone.utc)
+            from_dt = self._last_tick_time or datetime.now(UTC)
             ticks_df = self._mt5.get_ticks(self._symbol, from_dt, count=1000)
 
             if ticks_df.empty:

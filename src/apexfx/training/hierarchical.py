@@ -48,7 +48,6 @@ from typing import Any
 
 import gymnasium as gym
 import numpy as np
-from gymnasium import spaces
 
 from apexfx.utils.logging import get_logger
 

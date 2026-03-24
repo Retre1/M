@@ -7,8 +7,7 @@ import json
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
-from stable_baselines3 import SAC, PPO
+from stable_baselines3 import PPO, SAC
 
 from apexfx.config.registry import init_config
 from apexfx.data.data_store import DataStore
@@ -160,7 +159,7 @@ def main() -> None:
     print("  BACKTEST RESULTS (Out-of-Sample: last 30%)")
     print("=" * 60)
     print(f"  Test period:        {len(test_data)} bars")
-    print(f"  Initial balance:    $100,000.00")
+    print("  Initial balance:    $100,000.00")
     print(f"  Final balance:      ${final_value:,.2f}")
     print(f"  Total return:       {total_return_pct:+.2f}%")
     print(f"  Max drawdown:       {max_drawdown_pct:.2f}%")

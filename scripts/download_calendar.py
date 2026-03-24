@@ -17,7 +17,6 @@ Usage::
 from __future__ import annotations
 
 import argparse
-import sys
 from datetime import date, datetime
 
 from apexfx.data.calendar_fetcher import CalendarFetcher

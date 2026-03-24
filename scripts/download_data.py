@@ -82,7 +82,7 @@ def download_yfinance(
     if timeframe == "M1":
         max_days = 7
         start = end - timedelta(days=min(int(years * 365), max_days))
-        print(f"WARNING: M1 data limited to 7 days in yfinance")
+        print("WARNING: M1 data limited to 7 days in yfinance")
     elif timeframe in ("M5", "M15", "M30"):
         max_days = 60
         start = end - timedelta(days=min(int(years * 365), max_days))
@@ -211,7 +211,7 @@ def import_csv(
     if missing:
         print(f"ERROR: Missing columns: {missing}")
         print(f"       Found: {list(df.columns)}")
-        print(f"       Expected: time, open, high, low, close, volume")
+        print("       Expected: time, open, high, low, close, volume")
         sys.exit(1)
 
     # Parse time
@@ -319,7 +319,7 @@ Free data sources (manual download):
         print(f"  DONE: {total_bars} total bars downloaded")
         print(f"  Data stored in: {data_dir / 'raw' / 'bars'}")
         print(f"{'='*60}")
-        print(f"\nNext step — train the model:")
+        print("\nNext step — train the model:")
         print(f"  python scripts/train.py --symbol {args.symbol[0]}")
 
 

@@ -11,10 +11,10 @@ from apexfx.features.hurst import HurstExtractor
 from apexfx.features.intermarket_corr import IntermarketCorrExtractor
 from apexfx.features.normalizer import FeatureNormalizer
 from apexfx.features.order_flow import OrderFlowExtractor
+from apexfx.features.orderbook import OrderBookExtractor
 from apexfx.features.regime import RegimeExtractor
 from apexfx.features.spectral import SpectralExtractor
 from apexfx.features.structure import StructureExtractor
-from apexfx.features.orderbook import OrderBookExtractor
 from apexfx.features.volume_profile import VolumeProfileExtractor
 from apexfx.utils.logging import get_logger
 

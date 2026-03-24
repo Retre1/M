@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 
 import numpy as np
@@ -44,7 +44,7 @@ def get_active_sessions(utc_hour: int) -> list[ForexSession]:
 
 def is_forex_market_open(dt: datetime) -> bool:
     """Check if forex market is open (Sunday 21:00 UTC to Friday 21:00 UTC)."""
-    utc_dt = dt.astimezone(timezone.utc)
+    utc_dt = dt.astimezone(UTC)
     weekday = utc_dt.weekday()  # 0=Monday
     hour = utc_dt.hour
 
@@ -59,7 +59,7 @@ def is_forex_market_open(dt: datetime) -> bool:
 
 def encode_time_features(dt: datetime) -> np.ndarray:
     """Encode time as sinusoidal features: [hour_sin, hour_cos, dow_sin, dow_cos]."""
-    utc_dt = dt.astimezone(timezone.utc)
+    utc_dt = dt.astimezone(UTC)
     hour_frac = utc_dt.hour + utc_dt.minute / 60.0
     dow = utc_dt.weekday()
 

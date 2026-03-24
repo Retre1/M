@@ -1,0 +1,33 @@
+# ============================================================================
+# ApexFX Base Configuration — Google Colab T4 (16GB VRAM)
+#
+# Optimized for free-tier: T4 GPU, ~12GB RAM, 12h session limit
+# Use with: --config-dir configs/colab
+# ============================================================================
+
+seed: 42
+device: auto
+
+paths:
+  data_dir: /content/drive/MyDrive/apexfx/data
+  models_dir: /content/drive/MyDrive/apexfx/models
+  logs_dir: /content/drive/MyDrive/apexfx/logs
+
+logging:
+  level: INFO
+  format: console
+  file: /content/drive/MyDrive/apexfx/logs/apexfx.log
+  rotation_mb: 50
+  backup_count: 5
+
+performance:
+  n_envs: 4               # T4 has fewer cores, 4 is optimal
+  mixed_precision: true    # FP16 — critical for T4
+  torch_compile: false     # Skip on Colab — compilation takes 5+ min
+  compile_mode: default
+  cudnn_benchmark: true
+  tf32: false              # T4 doesn't support TF32 (Turing arch)
+  pin_memory: true
+  prefetch_factor: 2
+  gradient_checkpointing: true   # Save VRAM — critical for 16GB
+  dataloader_workers: 2          # Colab has limited CPU

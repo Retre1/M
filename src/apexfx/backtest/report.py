@@ -278,7 +278,7 @@ def _exit_reasons_json(result: BacktestResult) -> dict:
     for t in result.trades:
         r = t.exit_reason or "unknown"
         reasons[r] = reasons.get(r, 0) + 1
-    labels = [f"'{k}'" for k in reasons.keys()]
+    labels = [f"'{k}'" for k in reasons]
     values = list(reasons.values())
     return {"labels": f"[{','.join(labels)}]", "values": str(values)}
 

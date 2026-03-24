@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import numpy as np
 import pandas as pd
@@ -124,7 +124,7 @@ class CentralBankAnalyzer:
         stmt = CentralBankStatement(
             text=text[:500],  # Truncate for storage
             source=source,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             hawkish_score=hawkish_score,
             dovish_score=dovish_score,
             net_score=net_score,
@@ -145,7 +145,7 @@ class CentralBankAnalyzer:
         - momentum: change in stance
         - conviction: how many recent statements
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         filtered = self._statements
         if bank:
             filtered = [s for s in filtered if s.source == bank]

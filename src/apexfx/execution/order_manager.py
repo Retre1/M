@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 
 from apexfx.config.schema import ExecutionConfig
@@ -99,7 +98,7 @@ class OrderManager:
             direction=direction,
             volume=volume,
             limit_price=limit_price,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
             timeout_s=self._config.limit_timeout_s,
         )
 
@@ -154,7 +153,7 @@ class OrderManager:
             direction=direction,
             volume=volume,
             limit_price=price,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
             timeout_s=0,
         )
 
@@ -189,7 +188,7 @@ class OrderManager:
     async def monitor_pending_orders(self) -> list[ManagedOrder]:
         """Check pending orders for fills or timeouts."""
         completed: list[ManagedOrder] = []
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         for ticket, order in list(self._active_orders.items()):
             if order.status != OrderStatus.PENDING:
@@ -231,16 +230,17 @@ class OrderManager:
         return completed
 
     def _cancel_order(self, ticket: int) -> None:
-        """Cancel a pending order."""
+        """Cancel a pending order by ticket number."""
         try:
-            request = TradeRequest(
-                action=TradeAction.REMOVE,
-                symbol="",
-                volume=0,
-                type=OrderType.BUY,
-                price=0,
-            )
-            self._mt5.send_order(request)
-            logger.debug("Order cancelled", ticket=ticket)
+            mt5_request = {
+                "action": int(TradeAction.REMOVE),
+                "order": ticket,
+            }
+            result = self._mt5._mt5.order_send(mt5_request)
+            if result is not None and result.retcode == 10009:
+                logger.debug("Order cancelled", ticket=ticket)
+            else:
+                retcode = result.retcode if result else "None"
+                logger.error("Order cancel rejected", ticket=ticket, retcode=retcode)
         except Exception as e:
             logger.error("Failed to cancel order", ticket=ticket, error=str(e))

@@ -12,7 +12,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from apexfx.data.synthetic import SyntheticDataGenerator, RegimeParams
+from apexfx.data.synthetic import RegimeParams, SyntheticDataGenerator
 from apexfx.utils.logging import get_logger
 
 logger = get_logger(__name__)

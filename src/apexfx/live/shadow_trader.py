@@ -9,8 +9,8 @@ Never deploy a new model to live without shadow testing. This module:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import UTC, datetime
 
 import numpy as np
 
@@ -94,7 +94,7 @@ class ShadowTrader:
             actual_price: Market price at this bar
             live_return: Actual return of the live system for this bar
         """
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
 
         self._live_actions.append(live_action)
         self._live_returns.append(live_return)

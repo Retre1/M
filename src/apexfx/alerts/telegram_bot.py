@@ -23,7 +23,7 @@ class TelegramAlerter:
         4. Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env
     """
 
-    API_URL = "https://api.telegram.org/bot{token}/sendMessage"
+    API_BASE = "https://api.telegram.org/bot"
 
     def __init__(
         self,
@@ -38,7 +38,7 @@ class TelegramAlerter:
         self._chat_id = chat_id
         self._timeout = timeout_s
         self._parse_mode = parse_mode
-        self._url = self.API_URL.format(token=bot_token)
+        # Token is NOT embedded in the URL to avoid log leakage
         self._session: requests.Session | None = None
 
     @property
@@ -51,9 +51,14 @@ class TelegramAlerter:
             self._session.headers["Content-Type"] = "application/json"
         return self._session
 
+    @property
+    def _url(self) -> str:
+        """Build API URL at request time — never stored as a loggable string."""
+        return f"{self.API_BASE}{self._token}/sendMessage"
+
     async def send(self, alert: Alert) -> bool:
         """Send alert to Telegram (runs in thread pool to avoid blocking)."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._send_sync, alert)
 
     def _send_sync(self, alert: Alert) -> bool:
@@ -85,12 +90,12 @@ class TelegramAlerter:
                 body=resp.text[:200],
             )
 
-            # Retry once if rate limited
+            # Retry once if rate limited (cap sleep to avoid blocking thread pool)
             if resp.status_code == 429:
                 retry_after = resp.json().get("parameters", {}).get("retry_after", 5)
                 import time
 
-                time.sleep(min(retry_after, 30))
+                time.sleep(min(retry_after, 5))
                 resp = session.post(self._url, json=payload, timeout=self._timeout)
                 return resp.status_code == 200
 

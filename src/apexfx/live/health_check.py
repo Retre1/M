@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import os
-import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime
 
 from apexfx.data.mt5_client import MT5Client
 from apexfx.utils.logging import get_logger
@@ -67,7 +66,7 @@ class HealthCheck:
         data_fresh = True
         tick_age = 0.0
         if self._last_tick_time:
-            tick_age = (datetime.now(timezone.utc) - self._last_tick_time).total_seconds()
+            tick_age = (datetime.now(UTC) - self._last_tick_time).total_seconds()
             if tick_age > self._max_tick_age:
                 data_fresh = False
                 issues.append(f"Stale data: last tick {tick_age:.0f}s ago")
@@ -79,12 +78,17 @@ class HealthCheck:
         if self._last_inference_ms > self._max_inference_latency:
             issues.append(f"High inference latency: {self._last_inference_ms:.0f}ms")
 
-        # Memory usage
+        # Memory usage (cross-platform)
+        mem_usage = 0.0
         try:
-            import resource
-            mem_usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024  # MB on macOS
-        except Exception:
-            mem_usage = 0.0
+            import psutil
+            mem_usage = psutil.Process().memory_info().rss / (1024 * 1024)  # MB
+        except ImportError:
+            try:
+                import resource
+                mem_usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024  # MB on macOS
+            except Exception:
+                pass
 
         if mem_usage > self._max_memory:
             issues.append(f"High memory: {mem_usage:.0f}MB")

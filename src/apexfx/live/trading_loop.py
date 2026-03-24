@@ -4,24 +4,24 @@ from __future__ import annotations
 
 import asyncio
 import signal
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
 
-from apexfx.config.schema import AppConfig, SymbolConfig
+from apexfx.config.schema import AppConfig
 from apexfx.data.bar_aggregator import BarAggregator
 from apexfx.data.calendar_fetcher import CalendarFetcher
 from apexfx.data.data_store import DataStore
 from apexfx.data.mt5_client import MT5Client
+from apexfx.data.mtf_aligner import MTFDataAligner
 from apexfx.data.tick_collector import TickCollector
+from apexfx.env.mtf_obs_builder import MTFObservationBuilder
 from apexfx.execution.executor import Executor
 from apexfx.features.fundamental import FundamentalExtractor
 from apexfx.features.pipeline import FeaturePipeline
 from apexfx.live.health_check import HealthCheck
-from apexfx.live.shadow_trader import ShadowTrader, GradualRollout
-from apexfx.data.mtf_aligner import MTFDataAligner, MTFSlice
-from apexfx.env.mtf_obs_builder import MTFObservationBuilder
+from apexfx.live.shadow_trader import GradualRollout, ShadowTrader
 from apexfx.live.signal_generator import MTFSignalGenerator, SignalGenerator
 from apexfx.live.state_manager import StateManager
 from apexfx.risk.risk_manager import MarketState, RiskManager
@@ -223,6 +223,7 @@ class LiveTradingLoop:
 
                 if alert_cfg.telegram_enabled:
                     import os
+
                     from apexfx.alerts.telegram_bot import TelegramAlerter
                     token = alert_cfg.telegram_bot_token or os.getenv("TELEGRAM_BOT_TOKEN", "")
                     chat_id = alert_cfg.telegram_chat_id or os.getenv("TELEGRAM_CHAT_ID", "")
@@ -231,6 +232,7 @@ class LiveTradingLoop:
 
                 if alert_cfg.webhook_enabled:
                     import os
+
                     from apexfx.alerts.webhook import WebhookAlerter
                     url = alert_cfg.webhook_url or os.getenv("ALERT_WEBHOOK_URL", "")
                     if url:
@@ -253,6 +255,10 @@ class LiveTradingLoop:
             except Exception as e:
                 logger.warning("RealtimeNewsStream init failed", error=str(e))
 
+        # Circuit breaker: consecutive bar processing failures
+        self._consecutive_failures = 0
+        self._max_consecutive_failures = 10
+
         # Lock to serialize bar processing (prevent race condition
         # where two H1 bars are processed in parallel)
         self._processing_lock = asyncio.Lock()
@@ -265,9 +271,9 @@ class LiveTradingLoop:
         logger.info("=" * 60, symbol=self._symbol)
 
         # Setup signal handlers for graceful shutdown
-        loop = asyncio.get_event_loop()
+        self._loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(sig, self._shutdown)
+            self._loop.add_signal_handler(sig, self._shutdown)
 
         try:
             # Connect to MT5
@@ -315,7 +321,7 @@ class LiveTradingLoop:
     def _on_new_ticks(self, ticks: pd.DataFrame) -> None:
         """Process incoming ticks through bar aggregator."""
         bars = self._bar_aggregator.process_ticks(ticks)
-        self._health.update_tick_time(datetime.now(timezone.utc))
+        self._health.update_tick_time(datetime.now(UTC))
 
     def _on_bar_finalized(self, bar) -> None:
         """Handle a finalized bar — trigger the trading pipeline."""
@@ -345,7 +351,9 @@ class LiveTradingLoop:
             return
 
         # Use lock-protected wrapper to prevent parallel bar processing
-        asyncio.get_event_loop().create_task(self._process_bar_locked(bar))
+        self._loop.call_soon_threadsafe(
+            self._loop.create_task, self._process_bar_locked(bar)
+        )
 
     async def _process_bar_locked(self, bar) -> None:
         """Acquire processing lock before running the bar pipeline."""
@@ -363,6 +371,16 @@ class LiveTradingLoop:
                 )
                 # Force close if we still have a position
                 await self._force_close_if_needed(bar)
+                return
+
+            # --- Stale data guard: skip processing if data is not fresh ---
+            health = self._health_check.check()
+            if not health.data_fresh:
+                logger.warning(
+                    "Skipping bar — data is stale",
+                    tick_age_s=health.last_tick_age_s,
+                )
+                self._consecutive_failures += 1
                 return
 
             # --- Alert monitor: check risk states and fire alerts ---
@@ -591,8 +609,21 @@ class LiveTradingLoop:
                 equity=round(self._state.state.equity, 2),
             )
 
+            # Reset circuit breaker on success
+            self._consecutive_failures = 0
+
         except Exception as e:
-            logger.error("Bar processing error", error=str(e), exc_info=True)
+            self._consecutive_failures += 1
+            logger.error(
+                "Bar processing error",
+                error=str(e),
+                consecutive_failures=self._consecutive_failures,
+                exc_info=True,
+            )
+            if self._consecutive_failures >= self._max_consecutive_failures:
+                self._risk_manager.kill_switch.activate(
+                    f"Circuit breaker: {self._consecutive_failures} consecutive bar failures"
+                )
 
     @staticmethod
     def _is_major_transition(from_regime: str, to_regime: str) -> bool:
@@ -675,14 +706,42 @@ class LiveTradingLoop:
                         internal_vol=state.current_position_volume,
                         mt5_vol=pos.volume,
                     )
-                    state.current_position_direction = mt5_direction
-                    state.current_position_volume = pos.volume
+                    # Close stale internal position and re-open with correct values
+                    self._state.close_position(pos.price_open, 0.0)
+                    self._state.open_position(
+                        self._symbol, mt5_direction, pos.volume, pos.price_open,
+                    )
                     self._executor._current_position_direction = mt5_direction
                     self._executor._current_position_volume = pos.volume
                     self._executor._current_position_ticket = pos.ticket
 
         except Exception as e:
             logger.error("MT5 position sync failed", error=str(e))
+
+    def rollback_model(self) -> bool:
+        """Rollback to previous model version if available.
+
+        Returns True if rollback was successful, False if no previous model.
+        """
+        prev_path = getattr(self, "_previous_model_path", None)
+        if prev_path is None:
+            logger.warning("No previous model available for rollback")
+            return False
+
+        try:
+            self._signal_gen = SignalGenerator(prev_path, device="cpu")
+            self._current_model_path = prev_path
+            self._previous_model_path = None
+            self._model_version = getattr(self, "_model_version", 1) - 1
+            logger.info(
+                "Model rolled back successfully",
+                version=self._model_version,
+                path=prev_path,
+            )
+            return True
+        except Exception as e:
+            logger.error("Model rollback failed", error=str(e))
+            return False
 
     async def _force_close_if_needed(self, bar) -> None:
         """Force close open position if one exists."""
@@ -824,7 +883,7 @@ class LiveTradingLoop:
                                 f"{e.name} ({e.currency}) at {e.time_utc:%H:%M UTC}"
                                 for e in events
                                 if e.impact == "high"
-                                and e.time_utc > datetime.now(timezone.utc)
+                                and e.time_utc > datetime.now(UTC)
                             ),
                             "none",
                         ),
@@ -846,22 +905,32 @@ class LiveTradingLoop:
                         "Online learning: retraining triggered",
                         new_bars=self._new_bars_count,
                     )
-                    # Build recent data from bars buffer
+                    # Build recent data from bars buffer — run in thread pool to avoid blocking event loop
                     if len(self._bars_buffer) > 24:
                         recent_data = pd.DataFrame(self._bars_buffer)
-                        result = self._online_learner.retrain(recent_data)
+                        result = await self._loop.run_in_executor(
+                            None, self._online_learner.retrain, recent_data
+                        )
                         if result.promoted:
-                            # Reload model in signal generator
+                            # Reload model in signal generator — track version for rollback
                             try:
+                                prev_signal_gen = self._signal_gen
+                                prev_model_path = getattr(self, "_current_model_path", None)
                                 self._signal_gen = SignalGenerator(
                                     result.model_path, device="cpu"
                                 )
+                                self._previous_model_path = prev_model_path
+                                self._current_model_path = result.model_path
+                                self._model_version = getattr(self, "_model_version", 0) + 1
                                 logger.info(
                                     "Model updated via online learning",
+                                    version=self._model_version,
+                                    path=result.model_path,
                                     sharpe_improvement=round(result.sharpe_delta, 4),
+                                    validation_sharpe=round(result.validation_sharpe, 4),
                                 )
                             except Exception as e:
-                                logger.error("Model reload failed", error=str(e))
+                                logger.error("Model reload failed — keeping current", error=str(e))
                         self._new_bars_count = 0
             except Exception as e:
                 logger.error("Online learning error", error=str(e))
@@ -898,7 +967,7 @@ class LiveTradingLoop:
                         except asyncio.QueueEmpty:
                             break
 
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     pass  # No new headlines — flush whatever we have
 
                 # Flush batch to sentiment extractor
@@ -943,18 +1012,31 @@ class LiveTradingLoop:
             await asyncio.sleep(900)  # Every 15 minutes
 
     async def _cleanup(self) -> None:
-        """Graceful cleanup on shutdown."""
+        """Graceful cleanup on shutdown with 30-second timeout."""
         logger.info("Cleaning up...")
+        try:
+            await asyncio.wait_for(self._do_cleanup(), timeout=30.0)
+        except asyncio.TimeoutError:
+            logger.error("Cleanup timed out after 30s — force exiting")
+
+    async def _do_cleanup(self) -> None:
+        """Actual cleanup logic."""
 
         # Stop real-time news stream
         if self._news_stream is not None:
             self._news_stream.stop()
 
-        # Close any open positions
+        # Close any open positions — BOTH in MT5 and internal state
         state = self._state.state
         if state.current_position_direction != 0:
             logger.warning("Force-closing open position on shutdown")
             try:
+                # Close the actual MT5 position first
+                exec_result = await self._executor._close_position()
+                if not exec_result.success:
+                    logger.error("MT5 position close failed on shutdown", msg=exec_result.message)
+
+                # Update internal state
                 info = self._mt5.get_symbol_info(self._symbol)
                 price = info.bid if state.current_position_direction > 0 else info.ask
                 pnl = self._calculate_pnl(price)

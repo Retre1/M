@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import re
 import time
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -85,7 +85,7 @@ def _et_to_utc(dt: datetime) -> datetime:
         offset = _ET_OFFSET_DST
     else:
         offset = _ET_OFFSET_STANDARD
-    return (dt - offset).replace(tzinfo=timezone.utc)
+    return (dt - offset).replace(tzinfo=UTC)
 
 
 def _parse_ff_numeric(value: str | None) -> float | None:
@@ -109,9 +109,7 @@ def _parse_ff_numeric(value: str | None) -> float | None:
     s = s.replace("&nbsp;", "").replace(",", "").strip()
 
     multiplier = 1.0
-    if s.endswith("%"):
-        s = s[:-1].strip()
-    elif s.endswith("K"):
+    if s.endswith("%") or s.endswith("K"):
         s = s[:-1].strip()
         # Keep K values as-is for proper surprise computation
         # (forecast and actual both use K notation)

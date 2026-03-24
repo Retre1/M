@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
@@ -18,7 +18,6 @@ import torch
 from stable_baselines3 import SAC
 
 from apexfx.env.obs_builder import ObservationBuilder
-from apexfx.env.mtf_obs_builder import MTFObservationBuilder
 from apexfx.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -161,7 +160,7 @@ class SignalGenerator:
             breakout_agent_action=breakout_action,
             gating_weights=gating_weights,
             regime=regime,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             inference_time_ms=inference_ms,
             variable_importance=self._hook.variable_importance,
             uncertainty_score=uncertainty_score,
@@ -343,7 +342,7 @@ class MTFSignalGenerator:
             gating_weights=self._hook.gating_weights,
             tf_attention_weights=self._hook.tf_attention_weights,
             regime=regime,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             inference_time_ms=inference_ms,
             variable_importance=self._hook.variable_importance,
             uncertainty_score=uncertainty_score,

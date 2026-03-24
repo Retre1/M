@@ -200,9 +200,9 @@ class OnlineLearner:
 
         Returns path to candidate model.
         """
-        from apexfx.features.pipeline import FeaturePipeline
         from apexfx.env.forex_env import ForexTradingEnv
         from apexfx.env.reward import TradingReward
+        from apexfx.features.pipeline import FeaturePipeline
 
         pipeline = FeaturePipeline()
         features = pipeline.compute(train_data)
@@ -241,9 +241,9 @@ class OnlineLearner:
 
     def _evaluate_model(self, model_path: str, val_data: pd.DataFrame) -> float:
         """Evaluate a model on validation data and return Sharpe ratio."""
-        from apexfx.features.pipeline import FeaturePipeline
         from apexfx.env.forex_env import ForexTradingEnv
         from apexfx.env.reward import DifferentialSharpeReward
+        from apexfx.features.pipeline import FeaturePipeline
         from apexfx.utils.metrics import compute_all_metrics
 
         pipeline = FeaturePipeline()

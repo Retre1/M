@@ -10,7 +10,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from apexfx.data.mtf_aligner import MTFDataAligner, MTFSlice
+from apexfx.data.mtf_aligner import MTFSlice
 from apexfx.utils.time_utils import encode_time_features, get_session_id
 
 

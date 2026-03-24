@@ -9,7 +9,7 @@ Data source priority:
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -253,7 +253,7 @@ class IntermarketDataProvider:
 
             # Normalize to our format
             df = pd.DataFrame({
-                "time": data.index.tz_localize(timezone.utc) if data.index.tz is None else data.index.tz_convert(timezone.utc),
+                "time": data.index.tz_localize(UTC) if data.index.tz is None else data.index.tz_convert(UTC),
                 f"{instrument}_close": data["Close"].values.flatten(),
             })
             df["time"] = pd.to_datetime(df["time"]).dt.tz_localize(None)

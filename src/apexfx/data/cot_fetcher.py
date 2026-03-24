@@ -14,7 +14,7 @@ import csv
 import io
 import zipfile
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -119,7 +119,7 @@ class COTFetcher:
 
     def _parse_zip(self, zip_bytes: bytes) -> COTData:
         """Parse a CFTC zip file containing COT CSV data."""
-        data = COTData(last_update=datetime.now(timezone.utc))
+        data = COTData(last_update=datetime.now(UTC))
 
         try:
             with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
@@ -163,7 +163,7 @@ class COTFetcher:
                 else:
                     continue
 
-                report_date = report_date.replace(tzinfo=timezone.utc)
+                report_date = report_date.replace(tzinfo=UTC)
 
                 # Parse positioning columns
                 comm_long = self._parse_int(
@@ -277,13 +277,13 @@ class COTFetcher:
             return COTData()
 
         df = pd.read_csv(path)
-        data = COTData(last_update=datetime.now(timezone.utc))
+        data = COTData(last_update=datetime.now(UTC))
 
         for _, row in df.iterrows():
             ccy = row["currency"]
             record = COTRecord(
                 report_date=datetime.strptime(row["date"], "%Y-%m-%d").replace(
-                    tzinfo=timezone.utc
+                    tzinfo=UTC
                 ),
                 currency=ccy,
                 speculative_long=int(row.get("spec_long", 0)),

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import numpy as np
 
@@ -185,7 +185,7 @@ class VWAPExecutor:
             weights = np.ones(n, dtype=np.float64)
             total_weight = float(n)
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         slices: list[VWAPSlice] = []
         for i in range(n):
             pct = float(weights[i]) / total_weight
@@ -462,7 +462,7 @@ class ImplementationShortfallExecutor:
         )
         weight_sum = float(raw_weights.sum())
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         slices: list[ISSlice] = []
         for i in range(n):
             pct = float(raw_weights[i]) / weight_sum

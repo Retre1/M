@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import time
 
-from apexfx.alerts.alert_manager import AlertLevel, AlertManager
+from apexfx.alerts.alert_manager import AlertManager
 from apexfx.utils.logging import get_logger
 
 logger = get_logger(__name__)

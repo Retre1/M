@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 import torch
 from sb3_contrib import TQC
-from stable_baselines3 import SAC, PPO
+from stable_baselines3 import PPO, SAC
 from stable_baselines3.common.callbacks import CallbackList
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 
@@ -25,7 +25,9 @@ from apexfx.config.schema import AppConfig, RLAlgorithm
 from apexfx.data.mtf_synthetic import resample_real_data
 from apexfx.env.forex_env import ForexTradingEnv
 from apexfx.env.mtf_forex_env import MTFForexTradingEnv
-from apexfx.env.reward import CalmarWeightedReward, DifferentialSharpeReward, LogReturnReward, TradingReward
+from apexfx.env.reward import (
+    TradingReward,
+)
 from apexfx.env.wrappers import MonitorWrapper, NormalizeReward
 from apexfx.features.pipeline import FeaturePipeline
 from apexfx.features.selector import FeatureSelector
@@ -39,10 +41,11 @@ from apexfx.training.callbacks import (
     MetricsCallback,
     TradingCheckpointCallback,
 )
+from apexfx.training.checkpoint_manager import CheckpointManager, CheckpointState
 from apexfx.training.curriculum import CurriculumManager, MTFStageData
 from apexfx.training.ewc import EWCRegularizer
-from apexfx.training.per import PERCallback
 from apexfx.training.hierarchical import ActionSmoothingWrapper, TemporalCommitmentWrapper
+from apexfx.training.per import PERCallback
 from apexfx.training.pretrain import TFTPretrainer
 from apexfx.utils.gpu import (
     get_device_map,
@@ -122,9 +125,112 @@ class Trainer:
     def _mtf_enabled(self) -> bool:
         return self._config.model.mtf.enabled
 
-    def train(self) -> None:
-        """Run the full curriculum training pipeline."""
+    # ------------------------------------------------------------------
+    # Resume helpers
+    # ------------------------------------------------------------------
+
+    def _restore_state(self, state: CheckpointState) -> None:
+        """Restore trainer state from a checkpoint bundle."""
+        # 1. Restore EWC
+        if state.ewc_state is not None and self._ewc_reg is not None:
+            self._ewc_reg.load_state_dict(state.ewc_state)
+            logger.info("EWC state restored", n_consolidations=state.ewc_state.get("n_consolidations", 0))
+
+        # 2. Restore feature selector
+        if state.feature_selector_state is not None:
+            selected = state.feature_selector_state.get("selected_features", [])
+            if selected:
+                self._feature_selector._selected_features = selected
+                self._feature_selector._is_fitted = True
+                logger.info("Feature selector restored", n_features=len(selected))
+
+        # 3. Model will be loaded in _train_*_stage via _load_model_from_checkpoint
+        self._resume_model_path = state.model_path
+        self._resume_replay_buffer_path = state.checkpoint_dir / "replay_buffer_0.pkl"
+        if not self._resume_replay_buffer_path.exists():
+            # SB3 may save as replay_buffer.pkl
+            alt = state.checkpoint_dir / "replay_buffer.pkl"
+            if alt.exists():
+                self._resume_replay_buffer_path = alt
+            else:
+                self._resume_replay_buffer_path = None
+
+    def _load_model_from_checkpoint(self, env):
+        """Load SB3 model from resume checkpoint, set new env."""
+        model_path = getattr(self, "_resume_model_path", None)
+        if model_path is None or not Path(model_path).exists():
+            return None
+
+        rl_cfg = self._config.model.rl
+        algo_map = {"TQC": TQC, "SAC": SAC, "PPO": PPO}
+        algo_cls = algo_map.get(rl_cfg.algorithm.value, TQC)
+
+        logger.info("Loading model from checkpoint", path=str(model_path))
+        model = algo_cls.load(
+            str(model_path).replace(".zip", ""),
+            env=env,
+            device=self._device,
+        )
+
+        # Restore replay buffer if available
+        buf_path = getattr(self, "_resume_replay_buffer_path", None)
+        if buf_path is not None and Path(buf_path).exists():
+            try:
+                model.load_replay_buffer(str(buf_path))
+                logger.info("Replay buffer restored", size=model.replay_buffer.size())
+            except Exception as e:
+                logger.warning("Could not restore replay buffer", error=str(e))
+
+        # Clear resume paths
+        self._resume_model_path = None
+        self._resume_replay_buffer_path = None
+
+        return model
+
+    def _get_feature_selector_state(self) -> dict | None:
+        """Serialize feature selector state for checkpointing."""
+        if not self._feature_selector._is_fitted:
+            return None
+        return {
+            "selected_features": list(self._feature_selector._selected_features),
+            "top_n": self._feature_selector.top_n,
+        }
+
+    def train(self, resume: bool = False) -> None:
+        """Run the full curriculum training pipeline.
+
+        Args:
+            resume: If True, look for the latest checkpoint and continue
+                    from where training was interrupted. Useful for
+                    free-tier platforms with session time limits (Colab,
+                    Kaggle).
+        """
         logger.info("Starting training", device=self._device, mtf=self._mtf_enabled)
+
+        # Checkpoint manager for resumable saves
+        ckpt_base = Path(self._config.base.paths.models_dir) / "checkpoints"
+        self._ckpt_mgr = CheckpointManager(
+            ckpt_base,
+            keep_n=self._config.training.checkpointing.keep_best_n,
+        )
+
+        # Check for resume
+        resume_state: CheckpointState | None = None
+        resume_stage_idx = 0
+        if resume:
+            resume_state = CheckpointManager.find_latest(ckpt_base)
+            if resume_state is not None:
+                resume_stage_idx = resume_state.stage_idx
+                logger.info(
+                    "Resuming from checkpoint",
+                    stage=resume_state.stage_idx,
+                    timesteps_done=resume_state.total_timesteps_done,
+                    remaining=resume_state.remaining_timesteps,
+                    saved_at=resume_state.metadata.get("timestamp_human", "?"),
+                )
+                self._restore_state(resume_state)
+            else:
+                logger.info("No checkpoint found — starting fresh")
 
         curriculum = CurriculumManager(
             config=self._config.training,
@@ -134,17 +240,45 @@ class Trainer:
         )
 
         for stage_data in curriculum.stages():
+            # Skip stages already completed
+            if resume_state is not None and stage_data.stage_idx < resume_stage_idx:
+                logger.info(
+                    "Skipping completed stage",
+                    stage=stage_data.stage_idx,
+                    name=stage_data.stage.name,
+                )
+                continue
+
+            # For the resumed stage, adjust remaining timesteps
+            timesteps = stage_data.stage.total_timesteps
+            if (
+                resume_state is not None
+                and stage_data.stage_idx == resume_stage_idx
+                and resume_state.remaining_timesteps > 0
+            ):
+                timesteps = resume_state.remaining_timesteps
+                logger.info(
+                    "Resuming stage with remaining timesteps",
+                    stage=stage_data.stage_idx,
+                    original=stage_data.stage.total_timesteps,
+                    remaining=timesteps,
+                )
+
             logger.info(
                 "Training stage",
                 stage=stage_data.stage_idx,
                 name=stage_data.stage.name,
-                timesteps=stage_data.stage.total_timesteps,
+                timesteps=timesteps,
             )
 
             if self._mtf_enabled and isinstance(stage_data, MTFStageData):
-                self._train_mtf_stage(stage_data)
+                self._train_mtf_stage(stage_data, override_timesteps=timesteps)
             else:
-                self._train_single_tf_stage(stage_data)
+                self._train_single_tf_stage(stage_data, override_timesteps=timesteps)
+
+            # Clear resume_state after the resumed stage finishes
+            if resume_state is not None and stage_data.stage_idx == resume_stage_idx:
+                resume_state = None
 
             # EWC: consolidate Fisher after each stage (before moving to next)
             if self._ewc_reg is not None and self._model is not None:
@@ -155,10 +289,16 @@ class Trainer:
                     n_samples=ewc_cfg.fisher_n_samples,
                 )
 
-            # Save stage checkpoint
-            save_path = Path(self._config.base.paths.models_dir) / "checkpoints"
-            save_path.mkdir(parents=True, exist_ok=True)
-            self._model.save(str(save_path / f"stage_{stage_data.stage_idx}"))
+            # Save stage checkpoint (full resumable bundle)
+            self._ckpt_mgr.save(
+                self._model,
+                stage_idx=stage_data.stage_idx + 1,  # next stage to run
+                total_timesteps_done=0,
+                remaining_timesteps=0,
+                stage_name=f"after_{stage_data.stage.name}",
+                ewc_state=self._ewc_reg.state_dict() if self._ewc_reg else None,
+                feature_selector_state=self._get_feature_selector_state(),
+            )
             logger.info("Stage complete", stage=stage_data.stage_idx)
 
         # Save final model
@@ -195,7 +335,7 @@ class Trainer:
         Raises:
             ValueError: If no real data is available.
         """
-        from apexfx.training.walk_forward import WalkForwardValidator, WalkForwardResults
+        from apexfx.training.walk_forward import WalkForwardValidator
 
         if self._real_data is None:
             raise ValueError("Walk-forward validation requires real data")
@@ -279,8 +419,10 @@ class Trainer:
             logger.debug("Intermarket merge skipped in training", error=str(e))
             return bars
 
-    def _train_single_tf_stage(self, stage_data) -> None:
+    def _train_single_tf_stage(self, stage_data, *, override_timesteps: int | None = None) -> None:
         """Train a single-timeframe stage (original behavior)."""
+        timesteps = override_timesteps or stage_data.stage.total_timesteps
+
         # Merge intermarket data before feature computation
         bars_with_intermarket = self._merge_intermarket(stage_data.data, "H1")
 
@@ -304,26 +446,32 @@ class Trainer:
         logger.info("Building environment")
         env = self._build_env(features, n_features)
 
-        # Build or update model
-        if self._model is None or not stage_data.stage.warm_start:
+        # Try loading from checkpoint first (resume path)
+        resumed_model = self._load_model_from_checkpoint(env)
+        if resumed_model is not None:
+            self._model = resumed_model
+            logger.info("Model restored from checkpoint")
+        elif self._model is None or not stage_data.stage.warm_start:
             logger.info("Building model")
             self._model = self._build_model(env, n_features)
         else:
             self._model.set_env(env)
             logger.info("Warm-starting from previous stage")
 
-        callbacks = self._build_callbacks(stage_data.stage_idx)
+        callbacks = self._build_callbacks(stage_data.stage_idx, timesteps)
 
-        logger.info("Starting model.learn()", timesteps=stage_data.stage.total_timesteps)
+        logger.info("Starting model.learn()", timesteps=timesteps)
         self._model.learn(
-            total_timesteps=stage_data.stage.total_timesteps,
+            total_timesteps=timesteps,
             callback=callbacks,
             reset_num_timesteps=not stage_data.stage.warm_start,
             progress_bar=True,
         )
 
-    def _train_mtf_stage(self, stage_data: MTFStageData) -> None:
+    def _train_mtf_stage(self, stage_data: MTFStageData, *, override_timesteps: int | None = None) -> None:
         """Train a multi-timeframe stage."""
+        timesteps = override_timesteps or stage_data.stage.total_timesteps
+
         # Merge intermarket data for each timeframe
         d1_data = self._merge_intermarket(stage_data.d1_data, "D1")
         h1_data = self._merge_intermarket(stage_data.h1_data, "H1")
@@ -357,19 +505,23 @@ class Trainer:
         logger.info("Building MTF environment")
         env = self._build_mtf_env(d1_features, h1_features, m5_features, n_features)
 
-        # Build or update model
-        if self._model is None or not stage_data.stage.warm_start:
+        # Try loading from checkpoint first (resume path)
+        resumed_model = self._load_model_from_checkpoint(env)
+        if resumed_model is not None:
+            self._model = resumed_model
+            logger.info("MTF model restored from checkpoint")
+        elif self._model is None or not stage_data.stage.warm_start:
             logger.info("Building MTF model")
             self._model = self._build_mtf_model(env, n_features)
         else:
             self._model.set_env(env)
             logger.info("Warm-starting from previous stage")
 
-        callbacks = self._build_callbacks(stage_data.stage_idx)
+        callbacks = self._build_callbacks(stage_data.stage_idx, timesteps)
 
-        logger.info("Starting model.learn()", timesteps=stage_data.stage.total_timesteps)
+        logger.info("Starting model.learn()", timesteps=timesteps)
         self._model.learn(
-            total_timesteps=stage_data.stage.total_timesteps,
+            total_timesteps=timesteps,
             callback=callbacks,
             reset_num_timesteps=not stage_data.stage.warm_start,
             progress_bar=True,
@@ -834,17 +986,28 @@ class Trainer:
 
         return model
 
-    def _build_callbacks(self, stage_idx: int) -> CallbackList:
+    def _build_callbacks(self, stage_idx: int, stage_total_timesteps: int = 0) -> CallbackList:
         """Build SB3 callback list (incl. diversity if enabled)."""
         save_dir = str(
             Path(self._config.base.paths.models_dir) / "checkpoints" / f"stage_{stage_idx}"
         )
+
+        # Get stage name for checkpoint metadata
+        stages = self._config.training.curriculum.stages
+        stage_name = stages[stage_idx].name if stage_idx < len(stages) else f"stage_{stage_idx}"
+
         callbacks: list = [
             MetricsCallback(),
             TradingCheckpointCallback(
                 save_freq=self._config.training.checkpointing.save_freq,
                 save_dir=save_dir,
                 keep_best_n=self._config.training.checkpointing.keep_best_n,
+                checkpoint_manager=getattr(self, "_ckpt_mgr", None),
+                stage_idx=stage_idx,
+                stage_name=stage_name,
+                stage_total_timesteps=stage_total_timesteps,
+                ewc_regularizer=self._ewc_reg,
+                feature_selector_state=self._get_feature_selector_state(),
             ),
             EarlyStoppingCallback(
                 patience=self._config.training.early_stopping.patience,
@@ -1068,7 +1231,7 @@ class Trainer:
             logger.info("BACKTEST RESULTS (Out-of-Sample: last 30%)")
             logger.info("=" * 60)
             logger.info(f"  Test period:        {len(test_data)} bars")
-            logger.info(f"  Initial balance:    $100,000.00")
+            logger.info("  Initial balance:    $100,000.00")
             logger.info(f"  Final balance:      ${final_value:,.2f}")
             logger.info(f"  Total return:       {total_return_pct:+.2f}%")
             logger.info(f"  Max drawdown:       {max_dd_pct:.2f}%")

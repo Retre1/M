@@ -10,13 +10,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import threading
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-
-import numpy as np
 
 from apexfx.utils.logging import get_logger
 
@@ -135,14 +134,17 @@ class StateManager:
             self._state.unrealized_pnl = unrealized_pnl
             self._state.peak_equity = max(self._state.peak_equity, equity)
 
-            dd = (self._state.peak_equity - equity) / self._state.peak_equity
+            if self._state.peak_equity > 0:
+                dd = (self._state.peak_equity - equity) / self._state.peak_equity
+            else:
+                dd = 0.0
             self._state.max_drawdown = max(self._state.max_drawdown, dd)
 
             self._state.equity_curve.append(equity)
             if len(self._state.equity_curve) > 100_000:
                 self._state.equity_curve = self._state.equity_curve[-50_000:]
 
-            self._state.last_update = datetime.now(timezone.utc).isoformat()
+            self._state.last_update = datetime.now(UTC).isoformat()
 
     def open_position(
         self,
@@ -161,7 +163,7 @@ class StateManager:
             self._state.current_position_direction = direction
             self._state.current_position_volume = volume
             self._state.current_position_entry_price = entry_price
-            self._state.current_position_entry_time = datetime.now(timezone.utc).isoformat()
+            self._state.current_position_entry_time = datetime.now(UTC).isoformat()
             self._state.time_in_position = 0
 
             logger.info(
@@ -185,7 +187,7 @@ class StateManager:
 
             record = TradeRecord(
                 entry_time=self._state.current_position_entry_time,
-                exit_time=datetime.now(timezone.utc).isoformat(),
+                exit_time=datetime.now(UTC).isoformat(),
                 symbol=self._state.current_position_symbol,
                 direction="LONG" if self._state.current_position_direction > 0 else "SHORT",
                 volume=self._state.current_position_volume,
@@ -246,7 +248,7 @@ class StateManager:
             self._wal_sequence += 1
             entry = WALEntry(
                 sequence=self._wal_sequence,
-                timestamp=datetime.now(timezone.utc).isoformat(),
+                timestamp=datetime.now(UTC).isoformat(),
                 operation=operation,
                 data=data,
                 checksum=WALEntry.compute_checksum(data),
@@ -254,12 +256,15 @@ class StateManager:
             self._wal_file.parent.mkdir(parents=True, exist_ok=True)
             with open(self._wal_file, "a") as f:
                 f.write(entry.to_json() + "\n")
+                f.flush()
+                os.fsync(f.fileno())
 
             # Auto-checkpoint after N entries
             if self._wal_sequence % self._checkpoint_interval == 0:
                 self._checkpoint()
         except Exception as e:
-            logger.error("WAL write failed", error=str(e))
+            logger.error("WAL write failed — state mutation may be unrecoverable", error=str(e))
+            raise  # Do not proceed with state mutation if WAL failed
 
     def _checkpoint(self) -> None:
         """Full state snapshot + WAL truncation."""

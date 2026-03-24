@@ -7,7 +7,7 @@ suitable for SentimentExtractor consumption.
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from apexfx.utils.logging import get_logger
@@ -115,7 +115,7 @@ class NewsFetcher:
             if not title:
                 continue
 
-            timestamp = datetime.now(timezone.utc).isoformat()
+            timestamp = datetime.now(UTC).isoformat()
             if date_match:
                 try:
                     from email.utils import parsedate_to_datetime

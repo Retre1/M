@@ -165,13 +165,22 @@ def main():
     print("=" * 60)
     print()
 
-    # Initialize MT5 with explicit credentials and path
-    init_ok = mt5.initialize(
-        path=r"C:\Program Files\MetaTrader 5\terminal64.exe",
-        login=REDACTED_LOGIN,
-        server="FxPro-MT5 Demo",
-        password="REDACTED_PASSWORD",
-    )
+    # Initialize MT5 with credentials from environment variables
+    import os
+    mt5_path = os.getenv("MT5_PATH", r"C:\Program Files\MetaTrader 5\terminal64.exe")
+    mt5_login = os.getenv("MT5_LOGIN")
+    mt5_server = os.getenv("MT5_SERVER")
+    mt5_password = os.getenv("MT5_PASSWORD")
+
+    init_kwargs = {"path": mt5_path}
+    if mt5_login:
+        init_kwargs["login"] = int(mt5_login)
+    if mt5_server:
+        init_kwargs["server"] = mt5_server
+    if mt5_password:
+        init_kwargs["password"] = mt5_password
+
+    init_ok = mt5.initialize(**init_kwargs)
     if not init_ok:
         print(f"ERROR: MT5 init failed: {mt5.last_error()}")
         print("Make sure MetaTrader 5 is running!")

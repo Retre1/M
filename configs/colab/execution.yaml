@@ -1,0 +1,49 @@
+order_type: limit              # market | limit
+limit_offset_pips: 0.5        # Place limit order this much better than market
+limit_timeout_s: 30            # Cancel unfilled limit after this
+limit_fallback: market         # market | cancel -- what to do on timeout
+
+slippage:
+  max_slippage_pips: 1.0       # Reject fill if slippage exceeds this
+  track_history: true
+
+session_filter:
+  enabled: true
+  allowed_sessions:
+    - london
+    - new_york
+    - overlap_ln
+
+news_blackout:
+  enabled: true
+  blackout_minutes_before: 15
+  blackout_minutes_after: 10
+  calendar_source: config      # config | external
+
+retry:
+  max_retries: 3
+  backoff_base_ms: 500
+  backoff_max_ms: 5000
+
+# Strategy trade filter (rule-based layer over RL agent)
+# These rules are NON-NEGOTIABLE — the agent cannot override them
+strategy_filter:
+  enabled: true
+  news_blackout_threshold: 0.5     # Block if news_impact_active >= this
+  time_to_event_threshold: 0.01    # Block if time_to_next_event < this (~15min)
+  min_fundamental_bias: 0.3        # Minimum |fundamental_bias| for entry
+  require_structure_confirm: true   # Require structure break for entry
+  exit_on_conflict: true           # Force close when conflicting_signals=1
+  reduce_scale_pre_news: 0.5      # Scale to 50% when approaching news
+  pre_news_time_threshold: 0.1    # Start reducing ~2.4h before event
+  block_against_bias: true         # Block entries against fundamental direction
+  min_bias_for_direction: 0.5      # Minimum |bias| to enforce direction rule
+
+# Smart execution algorithm routing
+smart_execution:
+  algorithm: auto                  # direct | twap | vwap | is | auto
+  urgency: 0.5                    # 0=patient, 1=aggressive
+  twap_threshold_lots: 0.5        # Orders < this use direct market
+  vwap_threshold_lots: 2.0        # Orders < this use TWAP
+  is_threshold_lots: 5.0          # Orders >= this use Implementation Shortfall
+  max_deviation_pct: 0.005        # Max price deviation before aborting algo

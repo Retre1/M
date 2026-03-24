@@ -250,7 +250,6 @@ def enable_gradient_checkpointing(model: nn.Module) -> None:
     Only worth it if you're VRAM-limited (not the case with 96GB,
     but useful if you scale d_model to 512+).
     """
-    from torch.utils.checkpoint import checkpoint
 
     # Mark all transformer layers for checkpointing
     for name, module in model.named_modules():

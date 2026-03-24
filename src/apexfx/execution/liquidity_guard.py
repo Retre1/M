@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from apexfx.config.schema import ExecutionConfig, SymbolConfig
 from apexfx.data.mt5_client import MT5Client
 from apexfx.utils.logging import get_logger
-from apexfx.utils.time_utils import ForexSession, get_active_sessions, is_forex_market_open
+from apexfx.utils.time_utils import get_active_sessions, is_forex_market_open
 
 logger = get_logger(__name__)
 
@@ -52,7 +52,7 @@ class LiquidityGuard:
 
     def check(self, symbol: str) -> LiquidityStatus:
         """Perform all liquidity checks for a symbol."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # Check 1: Market open
         if not is_forex_market_open(now):

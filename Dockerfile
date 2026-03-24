@@ -48,9 +48,16 @@ RUN groupadd -r apexfx && useradd -r -g apexfx -d /app apexfx \
     && chown -R apexfx:apexfx /app
 USER apexfx
 
-# Health check
+# Health check — verifies trading loop state file is fresh (updated within 5 min)
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
-    CMD python3 -c "import apexfx; print('ok')" || exit 1
+    CMD python3 -c "\
+import json, time; \
+from pathlib import Path; \
+p = Path('data/portfolio_state.json'); \
+assert p.exists(), 'No state file'; \
+age = time.time() - p.stat().st_mtime; \
+assert age < 300, f'State file stale ({age:.0f}s)'; \
+print('ok')" || exit 1
 
 EXPOSE 8050
 
@@ -89,8 +96,15 @@ RUN groupadd -r apexfx && useradd -r -g apexfx -d /app apexfx \
     && chown -R apexfx:apexfx /app
 USER apexfx
 
-HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
-    CMD python3 -c "import apexfx; print('ok')" || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=60s \
+    CMD python3 -c "\
+import json, time; \
+from pathlib import Path; \
+p = Path('data/portfolio_state.json'); \
+assert p.exists(), 'No state file'; \
+age = time.time() - p.stat().st_mtime; \
+assert age < 300, f'State file stale ({age:.0f}s)'; \
+print('ok')" || exit 1
 
 EXPOSE 8050
 CMD ["python3", "scripts/live_trade.py"]

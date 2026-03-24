@@ -12,7 +12,7 @@ The agent LEARNS from these features — they're not hardcoded rules.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 import numpy as np
 import pandas as pd

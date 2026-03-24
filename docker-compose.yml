@@ -24,10 +24,11 @@ services:
       - ./configs:/app/configs
     command: ["python3", "scripts/live_trade.py"]
     healthcheck:
-      test: ["CMD", "python3", "-c", "import apexfx; print('ok')"]
+      test: ["CMD", "python3", "-c", "import json, time; from pathlib import Path; p = Path('data/portfolio_state.json'); assert p.exists(), 'No state file'; age = time.time() - p.stat().st_mtime; assert age < 300, f'State file stale ({age:.0f}s)'; print('ok')"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 60s
     deploy:
       resources:
         limits:
@@ -43,7 +44,7 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      - DASH_HOST=0.0.0.0
+      - DASH_HOST=127.0.0.1  # Production: use reverse proxy with auth for external access
       - DASH_PORT=8050
       - DASH_DEBUG=false
       - PYTHONPATH=/app/src
@@ -52,7 +53,7 @@ services:
       - ./models:/app/models:ro
       - ./logs:/app/logs:ro
     ports:
-      - "${DASH_PORT:-8050}:8050"
+      - "127.0.0.1:${DASH_PORT:-8050}:8050"
     command: ["python3", "scripts/launch_dashboard.py"]
     depends_on:
       engine:
