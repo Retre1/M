@@ -22,6 +22,8 @@ services:
       - ./models:/app/models
       - ./logs:/app/logs
       - ./configs:/app/configs
+    ports:
+      - "127.0.0.1:${METRICS_PORT:-9090}:9090"
     command: ["python3", "scripts/live_trade.py"]
     healthcheck:
       test: ["CMD", "python3", "-c", "import json, time; from pathlib import Path; p = Path('data/portfolio_state.json'); assert p.exists(), 'No state file'; age = time.time() - p.stat().st_mtime; assert age < 300, f'State file stale ({age:.0f}s)'; print('ok')"]

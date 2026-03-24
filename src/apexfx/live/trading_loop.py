@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import signal
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -27,6 +28,7 @@ from apexfx.live.state_manager import StateManager
 from apexfx.risk.risk_manager import MarketState, RiskManager
 from apexfx.utils.logging import get_logger
 from apexfx.utils.math_utils import atr
+from apexfx.utils import prometheus as prom
 
 logger = get_logger(__name__)
 
@@ -276,6 +278,10 @@ class LiveTradingLoop:
             self._loop.add_signal_handler(sig, self._shutdown)
 
         try:
+            # Start Prometheus metrics server
+            metrics_port = getattr(self._config.base, "metrics_port", 9090)
+            prom.start_metrics_server(port=metrics_port)
+
             # Connect to MT5
             self._mt5.connect()
 
@@ -362,6 +368,7 @@ class LiveTradingLoop:
 
     async def _process_bar(self, bar) -> None:
         """Full trading pipeline for a finalized bar."""
+        _bar_start = time.monotonic()
         try:
             # --- Kill switch check: skip all processing if active ---
             if self._risk_manager.kill_switch.is_active:
@@ -624,6 +631,21 @@ class LiveTradingLoop:
                 self._risk_manager.kill_switch.activate(
                     f"Circuit breaker: {self._consecutive_failures} consecutive bar failures"
                 )
+        finally:
+            # --- Update Prometheus metrics ---
+            prom.bar_processing_seconds.observe(time.monotonic() - _bar_start)
+            prom.consecutive_failures.set(self._consecutive_failures)
+            prom.kill_switch_active.set(
+                1.0 if self._risk_manager.kill_switch.is_active else 0.0
+            )
+            state = self._state.state
+            prom.equity.set(state.equity)
+            prom.drawdown_pct.set(state.max_drawdown * 100)
+            prom.trade_count.set(len(state.trade_history))
+            prom.position_direction.set(state.current_position_direction)
+            prom.position_volume.set(state.current_position_volume)
+            prom.pnl_total.set(state.realized_pnl)
+            prom.model_version.set(getattr(self, "_model_version", 0))
 
     @staticmethod
     def _is_major_transition(from_regime: str, to_regime: str) -> bool:
@@ -802,6 +824,12 @@ class LiveTradingLoop:
 
         while self._running:
             health = self._health.check()
+
+            # Update Prometheus health metrics
+            prom.health_status.set(1.0 if health.overall_healthy else 0.0)
+            prom.tick_age_seconds.set(health.last_tick_age_s)
+            prom.memory_usage_mb.set(health.memory_usage_mb)
+
             if not health.overall_healthy:
                 logger.warning("System unhealthy", issues=health.issues)
 
@@ -1049,6 +1077,9 @@ class LiveTradingLoop:
 
         # Disconnect MT5
         self._mt5.disconnect()
+
+        # Stop Prometheus metrics server
+        prom.stop_metrics_server()
 
         logger.info("=" * 60)
         logger.info("APEXFX QUANTUM — LIVE TRADING STOPPED")
