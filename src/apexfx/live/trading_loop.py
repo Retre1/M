@@ -21,6 +21,7 @@ from apexfx.env.mtf_obs_builder import MTFObservationBuilder
 from apexfx.execution.executor import Executor
 from apexfx.features.fundamental import FundamentalExtractor
 from apexfx.features.pipeline import FeaturePipeline
+from apexfx.live.decision_logger import DecisionLogger, DecisionRecord
 from apexfx.live.health_check import HealthCheck
 from apexfx.live.shadow_trader import GradualRollout, ShadowTrader
 from apexfx.live.signal_generator import MTFSignalGenerator, SignalGenerator
@@ -172,6 +173,18 @@ class LiveTradingLoop:
                 )
             except Exception as e:
                 logger.warning("Live online learner init failed", error=str(e))
+
+        # --- XAI Decision Logger ---
+        self._decision_logger: DecisionLogger | None = None
+        xai_cfg = config.model.xai
+        if xai_cfg.enabled:
+            try:
+                self._decision_logger = DecisionLogger(
+                    db_path=xai_cfg.db_path,
+                    buffer_size=xai_cfg.buffer_size,
+                )
+            except Exception as e:
+                logger.warning("Decision logger init failed", error=str(e))
 
         # --- Model version registry for promotion tracking & rollback ---
         self._model_registry = ModelRegistry()
@@ -497,6 +510,19 @@ class LiveTradingLoop:
             signal = self._signal_gen.generate(observation)
             self._health.update_inference_latency(signal.inference_time_ms)
             self._new_bars_count += 1
+
+            # --- XAI: Log decision record ---
+            if self._decision_logger is not None:
+                try:
+                    state = self._state.state
+                    record = DecisionRecord.from_signal(
+                        signal,
+                        portfolio_value=state.equity,
+                        position=state.current_position_volume * state.current_position_direction,
+                    )
+                    self._decision_logger.log(record)
+                except Exception as e:
+                    logger.debug("Decision logging failed", error=str(e))
 
             # --- TIER 1: Regime transition handling ---
             self._risk_manager.set_regime(signal.regime)
@@ -1110,6 +1136,10 @@ class LiveTradingLoop:
                 self._state.close_position(price, pnl)
             except Exception as e:
                 logger.error("Failed to close position on shutdown", error=str(e))
+
+        # Flush and close decision logger
+        if self._decision_logger is not None:
+            self._decision_logger.close()
 
         # Persist final state
         self._state.persist()

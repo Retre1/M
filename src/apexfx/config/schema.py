@@ -133,6 +133,15 @@ class NewsConfig(BaseModel):
     urgency_cooldown_s: int = 5
 
 
+class VolumeBarConfig(BaseModel):
+    """Volume-based bar aggregation configuration."""
+    enabled: bool = False
+    threshold: float = 1000.0
+    adaptive: bool = True
+    target_bars_per_hour: int = 12
+    min_bar_duration_sec: float = 1.0
+
+
 class DataConfig(BaseModel):
     timeframes: list[str] = Field(default_factory=lambda: ["M1", "M5", "H1", "D1"])
     lookback_bars: int = 500
@@ -143,6 +152,7 @@ class DataConfig(BaseModel):
     collection: CollectionConfig = Field(default_factory=CollectionConfig)
     calendar: CalendarConfig = Field(default_factory=CalendarConfig)
     news: NewsConfig = Field(default_factory=NewsConfig)
+    volume_bars: VolumeBarConfig = Field(default_factory=VolumeBarConfig)
 
 
 # --- Model ---
@@ -235,6 +245,46 @@ class EnsembleDiversityConfig(BaseModel):
     lr: float = 1e-4
 
 
+class DimReductionConfig(BaseModel):
+    """Dimensionality reduction for high-dimensional feature matrices.
+
+    Compresses ~3500 features down to ``n_components`` (default 128)
+    using PCA or an autoencoder.  Applied AFTER normalisation, BEFORE
+    the model sees the data.
+    """
+    enabled: bool = False
+    method: Literal["pca", "autoencoder"] = "pca"
+    n_components: int = 128
+    min_explained_variance: float = 0.95
+    autoencoder_epochs: int = 50
+
+
+class ImportanceTrackingConfig(BaseModel):
+    """Feature importance tracking from TFT Variable Selection Network."""
+    enabled: bool = False
+    ema_alpha: float = 0.01
+    history_size: int = 1000
+    top_k: int = 5
+
+
+class AdaptiveSelectionConfig(BaseModel):
+    """Adaptive feature selection — auto-disable drifted low-value features."""
+    enabled: bool = False
+    min_importance: float = 0.001
+    drift_window: int = 500
+    cooldown_bars: int = 100
+    max_disable_pct: float = 0.10
+    always_on_features: list[str] = Field(default_factory=list)
+
+
+class XAIConfig(BaseModel):
+    """Explainable AI decision logging for post-mortem debugging."""
+    enabled: bool = False
+    db_path: str = "data/decisions.db"
+    buffer_size: int = 100
+    top_k_features: int = 5
+
+
 class StructureConfig(BaseModel):
     """Structure break detection configuration."""
     swing_period: int = 5
@@ -260,6 +310,10 @@ class ModelConfig(BaseModel):
     diversity: EnsembleDiversityConfig = Field(default_factory=EnsembleDiversityConfig)
     structure: StructureConfig = Field(default_factory=StructureConfig)
     position_management: PositionManagementConfig = Field(default_factory=PositionManagementConfig)
+    importance_tracking: ImportanceTrackingConfig = Field(default_factory=ImportanceTrackingConfig)
+    adaptive_selection: AdaptiveSelectionConfig = Field(default_factory=AdaptiveSelectionConfig)
+    dim_reduction: DimReductionConfig = Field(default_factory=DimReductionConfig)
+    xai: XAIConfig = Field(default_factory=XAIConfig)
 
 
 # --- Training ---

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 from apexfx.features import BaseFeatureExtractor
 from apexfx.features.clustering import ClusteringExtractor
+from apexfx.features.dim_reducer import BaseDimReducer
 from apexfx.features.fundamental import FundamentalExtractor
 from apexfx.features.hurst import HurstExtractor
 from apexfx.features.intermarket_corr import IntermarketCorrExtractor
@@ -20,6 +22,29 @@ from apexfx.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+# Columns that should NOT go through dimensionality reduction — they are
+# already low-dimensional (regime labels, time encodings, binary flags,
+# fundamental features, etc.).
+_DIM_REDUCE_EXCLUDE = frozenset([
+    "regime_label", "hurst_regime", "in_liquidity_zone",
+    "delta_divergence",
+    # Binary / categorical
+    "news_impact_active", "conflicting_signals",
+    "structure_break_bull", "structure_break_bear",
+    "structure_trend", "retest_signal",
+    # Already normalized / bounded
+    "bid_ask_imbalance", "book_pressure",
+    "headline_count",
+    # Time encodings (known future inputs)
+    "hour_sin", "hour_cos", "dow_sin", "dow_cos", "session_id",
+])
+
+# Prefixes for columns that are excluded from dim-reduction wholesale.
+_DIM_REDUCE_EXCLUDE_PREFIXES = (
+    "fundamental_",  # fundamental features — small and interpretable
+    "regime_",       # regime labels
+)
+
 
 class FeaturePipeline:
     """Orchestrates all feature extractors and produces the final feature matrix."""
@@ -29,10 +54,12 @@ class FeaturePipeline:
         extractors: list[BaseFeatureExtractor] | None = None,
         normalizer: FeatureNormalizer | None = None,
         normalize: bool = True,
+        dim_reducer: BaseDimReducer | None = None,
     ) -> None:
         self._extractors = extractors or self._default_extractors()
         self._normalizer = normalizer or FeatureNormalizer(method="zscore", window=252)
         self._normalize = normalize
+        self._dim_reducer = dim_reducer
         self._feature_names: list[str] = []
 
     @staticmethod
@@ -69,6 +96,32 @@ class FeaturePipeline:
     @property
     def n_features(self) -> int:
         return len(self.feature_names)
+
+    @property
+    def effective_n_features(self) -> int:
+        """Number of features the model actually sees (after reduction if active)."""
+        if self._dim_reducer is not None and self._dim_reducer.is_fitted:
+            # Reduced market features + passthrough features (estimated)
+            return self._dim_reducer.n_components + self._count_passthrough_features()
+        return self.n_features
+
+    def _count_passthrough_features(self) -> int:
+        """Count features that bypass dimensionality reduction."""
+        count = 0
+        for name in self.feature_names:
+            if self._is_passthrough_feature(name):
+                count += 1
+        return count
+
+    @staticmethod
+    def _is_passthrough_feature(col: str) -> bool:
+        """Return True if *col* should bypass dim-reduction."""
+        if col in _DIM_REDUCE_EXCLUDE:
+            return True
+        for prefix in _DIM_REDUCE_EXCLUDE_PREFIXES:
+            if col.startswith(prefix):
+                return True
+        return False
 
     def compute(
         self,
@@ -130,10 +183,14 @@ class FeaturePipeline:
                     result[normalize_cols]
                 )
 
+        # Dimensionality reduction (after normalization, before model)
+        if self._dim_reducer is not None and self._dim_reducer.is_fitted:
+            result = self._apply_dim_reduction(result, bars.columns.tolist(), feature_cols)
+
         logger.info(
             "Feature pipeline complete",
             n_bars=len(result),
-            n_features=len(feature_cols),
+            n_features=len([c for c in result.columns if c not in bars.columns]),
         )
 
         return result
@@ -174,3 +231,64 @@ class FeaturePipeline:
     @property
     def normalizer(self) -> FeatureNormalizer:
         return self._normalizer
+
+    @property
+    def dim_reducer(self) -> BaseDimReducer | None:
+        return self._dim_reducer
+
+    @dim_reducer.setter
+    def dim_reducer(self, reducer: BaseDimReducer | None) -> None:
+        self._dim_reducer = reducer
+
+    def _apply_dim_reduction(
+        self,
+        result: pd.DataFrame,
+        bar_cols: list[str],
+        feature_cols: list[str],
+    ) -> pd.DataFrame:
+        """Replace high-dimensional market features with reduced components.
+
+        Only the *market* feature columns (those NOT in the passthrough set)
+        are compressed.  Passthrough columns (regime labels, time encodings,
+        fundamental features, etc.) are kept as-is and concatenated after
+        the reduced components.
+        """
+        reduce_cols = [
+            c for c in feature_cols
+            if not self._is_passthrough_feature(c)
+        ]
+        passthrough_cols = [
+            c for c in feature_cols
+            if self._is_passthrough_feature(c)
+        ]
+
+        if not reduce_cols:
+            return result
+
+        # Extract the matrix to reduce, fill any remaining NaN with 0
+        X = result[reduce_cols].values.astype(np.float64)
+        X = np.nan_to_num(X, nan=0.0)
+
+        reduced = self._dim_reducer.transform(X)
+
+        # Build reduced column names
+        n_comp = reduced.shape[1]
+        reduced_names = [f"pc_{i}" for i in range(n_comp)]
+
+        reduced_df = pd.DataFrame(reduced, index=result.index, columns=reduced_names)
+
+        # Reconstruct: bar columns + reduced + passthrough
+        keep_cols = bar_cols + passthrough_cols
+        result = pd.concat(
+            [result[keep_cols], reduced_df],
+            axis=1,
+        )
+
+        logger.debug(
+            "Dim reduction applied",
+            n_input=len(reduce_cols),
+            n_output=n_comp,
+            n_passthrough=len(passthrough_cols),
+        )
+
+        return result

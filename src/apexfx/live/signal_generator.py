@@ -18,6 +18,7 @@ import torch
 from stable_baselines3 import SAC
 
 from apexfx.env.obs_builder import ObservationBuilder
+from apexfx.features.importance_tracker import FeatureImportanceTracker
 from apexfx.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -39,6 +40,7 @@ class TradingSignal:
     uncertainty_score: float = 0.0           # MC Dropout uncertainty [0, 1]
     position_scale: float = 1.0              # Uncertainty-adjusted scale factor
     recommended_stop_atr_mult: float = 2.5   # Regime-aware stop multiplier
+    top_features: list[tuple[str, float]] = field(default_factory=list)  # Top K by importance
 
 
 class _HiveMindHook:
@@ -92,10 +94,29 @@ class SignalGenerator:
         obs_builder: ObservationBuilder | None = None,
         device: str = "cpu",
         uncertainty_n_samples: int = 10,
+        feature_names: list[str] | None = None,
+        importance_ema_alpha: float = 0.01,
+        importance_history_size: int = 1000,
+        importance_top_k: int = 5,
     ) -> None:
         self._device = device
         self._obs_builder = obs_builder or ObservationBuilder()
         self._uncertainty_n_samples = uncertainty_n_samples
+        self._importance_top_k = importance_top_k
+
+        # Feature importance tracker (optional)
+        self._importance_tracker: FeatureImportanceTracker | None = None
+        if feature_names:
+            self._importance_tracker = FeatureImportanceTracker(
+                feature_names=feature_names,
+                ema_alpha=importance_ema_alpha,
+                history_size=importance_history_size,
+            )
+            logger.info(
+                "Feature importance tracker created",
+                n_features=len(feature_names),
+                ema_alpha=importance_ema_alpha,
+            )
 
         # Load SB3 model
         logger.info("Loading model", path=str(model_path))
@@ -113,6 +134,11 @@ class SignalGenerator:
                 logger.info("HiveMind forward hook installed")
         except Exception as e:
             logger.warning("Could not install HiveMind hook", error=str(e))
+
+    @property
+    def importance_tracker(self) -> FeatureImportanceTracker | None:
+        """Access the feature importance tracker, if configured."""
+        return self._importance_tracker
 
     def generate(
         self,
@@ -147,6 +173,23 @@ class SignalGenerator:
         elif regime_features[4] > 0.5:
             regime = "mean_reverting"
 
+        # Update feature importance tracker
+        top_features: list[tuple[str, float]] = []
+        if (
+            self._importance_tracker is not None
+            and self._hook.variable_importance
+        ):
+            try:
+                vi_tensor = torch.tensor(
+                    self._hook.variable_importance, dtype=torch.float32,
+                )
+                self._importance_tracker.update(vi_tensor)
+                top_features = self._importance_tracker.get_top_k(
+                    self._importance_top_k,
+                )
+            except Exception as e:
+                logger.debug("Importance tracker update failed", error=str(e))
+
         # Compute uncertainty via MC Dropout
         uncertainty_score = self._compute_uncertainty(observation)
         position_scale = max(0.1, 1.0 - 0.5 * uncertainty_score)
@@ -166,6 +209,7 @@ class SignalGenerator:
             uncertainty_score=uncertainty_score,
             position_scale=position_scale,
             recommended_stop_atr_mult=stop_mult,
+            top_features=top_features,
         )
 
         gw_str = "/".join(f"{w:.2f}" for w in gating_weights)
