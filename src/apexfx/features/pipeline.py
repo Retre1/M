@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from apexfx.data.validator import BarDataValidator
 from apexfx.features.clustering import ClusteringExtractor
 from apexfx.features.hurst import HurstExtractor
 from apexfx.features.intermarket_corr import IntermarketCorrExtractor
@@ -30,10 +31,13 @@ class FeaturePipeline:
         extractors: list[BaseFeatureExtractor] | None = None,
         normalizer: FeatureNormalizer | None = None,
         normalize: bool = True,
+        validate: bool = True,
     ) -> None:
         self._extractors = extractors or self._default_extractors()
         self._normalizer = normalizer or FeatureNormalizer(method="zscore", window=252)
         self._normalize = normalize
+        self._validate = validate
+        self._validator = BarDataValidator()
         self._feature_names: list[str] = []
 
     @staticmethod
@@ -83,6 +87,19 @@ class FeaturePipeline:
         Run all extractors and concatenate results.
         Returns a DataFrame with the original bar columns plus all feature columns.
         """
+        # Validate and clean input data
+        if self._validate:
+            report = self._validator.validate(bars)
+            if report.issues:
+                logger.info("Data validation", summary=report.summary())
+            if not report.is_valid:
+                logger.warning(
+                    "Data has errors, running auto-clean",
+                    errors=[i.message for i in report.issues if i.severity == "error"],
+                )
+                bars = self._validator.clean(bars)
+                logger.info("Data cleaned", n_bars_before=report.n_bars, n_bars_after=len(bars))
+
         feature_dfs: list[pd.DataFrame] = []
 
         for extractor in self._extractors:

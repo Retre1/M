@@ -1,4 +1,8 @@
-"""DBSCAN clustering for support/resistance liquidity zone detection."""
+"""DBSCAN clustering for support/resistance liquidity zone detection.
+
+Optimized: pre-allocated NumPy arrays, no iloc writes.
+DBSCAN is inherently per-window, but we minimize Python overhead.
+"""
 
 from __future__ import annotations
 
@@ -41,17 +45,20 @@ class ClusteringExtractor(BaseFeatureExtractor):
 
     def extract(self, bars: pd.DataFrame, ticks: pd.DataFrame | None = None) -> pd.DataFrame:
         n = len(bars)
-        result = pd.DataFrame(index=bars.index)
-        for col in self.feature_names:
-            result[col] = np.nan
+        data = np.full((n, 5), np.nan)
 
-        close = bars["close"].values
-        high = bars["high"].values
-        low = bars["low"].values
-        volume = bars["volume"].values
+        close = bars["close"].values.astype(np.float64)
+        high = bars["high"].values.astype(np.float64)
+        low = bars["low"].values.astype(np.float64)
+        volume = bars["volume"].values.astype(np.float64)
 
-        # Compute ATR for adaptive eps
         atr_values = atr(high, low, close, self._atr_period)
+
+        col_support = 0
+        col_resistance = 1
+        col_in_zone = 2
+        col_n_clusters = 3
+        col_density = 4
 
         for i in range(self._window, n):
             current_price = close[i]
@@ -59,23 +66,21 @@ class ClusteringExtractor(BaseFeatureExtractor):
             if np.isnan(current_atr) or current_atr <= 0:
                 continue
 
-            # Adaptive DBSCAN eps
             eps = current_atr * self._eps_multiplier
+            s = i - self._window
 
-            # Create price points weighted by volume
-            w_close = close[i - self._window : i]
-            w_high = high[i - self._window : i]
-            w_low = low[i - self._window : i]
-            w_volume = volume[i - self._window : i]
+            w_close = close[s:i]
+            w_high = high[s:i]
+            w_low = low[s:i]
+            w_volume = volume[s:i]
 
-            # Use high/low/close as key price levels, weighted by volume
+            # Build volume-weighted price samples
             price_levels = np.concatenate([w_high, w_low, w_close])
             vol_weights = np.concatenate([w_volume, w_volume, w_volume])
 
-            # Repeat price levels by volume weight (normalized)
-            if vol_weights.sum() > 0:
-                weights_norm = (vol_weights / vol_weights.sum() * 100).astype(int)
-                weights_norm = np.maximum(weights_norm, 1)
+            total_w = vol_weights.sum()
+            if total_w > 0:
+                weights_norm = np.maximum((vol_weights / total_w * 100).astype(int), 1)
                 price_samples = np.repeat(price_levels, weights_norm)
             else:
                 price_samples = price_levels
@@ -83,61 +88,49 @@ class ClusteringExtractor(BaseFeatureExtractor):
             if len(price_samples) < self._min_samples:
                 continue
 
-            # Run DBSCAN
-            samples_2d = price_samples.reshape(-1, 1)
-            clustering = DBSCAN(eps=eps, min_samples=self._min_samples).fit(samples_2d)
+            # DBSCAN
+            labels = DBSCAN(eps=eps, min_samples=self._min_samples).fit_predict(
+                price_samples.reshape(-1, 1)
+            )
 
-            labels = clustering.labels_
-            unique_labels = set(labels) - {-1}
+            unique_labels = set(labels)
+            unique_labels.discard(-1)
             n_clusters = len(unique_labels)
-
-            result.iloc[i, result.columns.get_loc("n_clusters")] = n_clusters
+            data[i, col_n_clusters] = n_clusters
 
             if n_clusters == 0:
                 continue
 
-            # Compute cluster centers
-            cluster_centers = []
-            cluster_sizes = []
-            for label in unique_labels:
-                mask = labels == label
-                center = samples_2d[mask].mean()
-                size = mask.sum()
-                cluster_centers.append(center)
-                cluster_sizes.append(size)
+            # Compute cluster centers and sizes via vectorized groupby
+            label_arr = np.array(list(unique_labels))
+            cluster_centers = np.empty(n_clusters)
+            cluster_sizes = np.empty(n_clusters)
+            for j, lbl in enumerate(label_arr):
+                mask = labels == lbl
+                cluster_centers[j] = price_samples[mask].mean()
+                cluster_sizes[j] = mask.sum()
 
-            cluster_centers = np.array(cluster_centers)
-            cluster_sizes = np.array(cluster_sizes)
-
-            # Find nearest support (cluster center below current price)
+            # Nearest support (below current price)
             supports = cluster_centers[cluster_centers < current_price]
             if len(supports) > 0:
-                nearest_support = supports[np.argmax(supports)]  # Closest support below
-                result.iloc[i, result.columns.get_loc("nearest_support_distance")] = (
-                    (current_price - nearest_support) / current_price
-                )
+                nearest_support = supports.max()
+                data[i, col_support] = (current_price - nearest_support) / current_price
             else:
-                result.iloc[i, result.columns.get_loc("nearest_support_distance")] = 0.0
+                data[i, col_support] = 0.0
 
-            # Find nearest resistance (cluster center above current price)
+            # Nearest resistance (above current price)
             resistances = cluster_centers[cluster_centers > current_price]
             if len(resistances) > 0:
-                nearest_resistance = resistances[np.argmin(resistances)]  # Closest resistance above
-                result.iloc[i, result.columns.get_loc("nearest_resistance_distance")] = (
-                    (nearest_resistance - current_price) / current_price
-                )
+                nearest_resistance = resistances.min()
+                data[i, col_resistance] = (nearest_resistance - current_price) / current_price
             else:
-                result.iloc[i, result.columns.get_loc("nearest_resistance_distance")] = 0.0
+                data[i, col_resistance] = 0.0
 
-            # Is current price inside a cluster?
-            min_dist = np.min(np.abs(cluster_centers - current_price))
-            result.iloc[i, result.columns.get_loc("in_liquidity_zone")] = (
-                1.0 if min_dist < eps else 0.0
-            )
+            # In liquidity zone?
+            min_dist = np.abs(cluster_centers - current_price).min()
+            data[i, col_in_zone] = 1.0 if min_dist < eps else 0.0
 
-            # Cluster density: weighted average cluster size
-            result.iloc[i, result.columns.get_loc("cluster_density")] = (
-                cluster_sizes.mean() / len(price_samples)
-            )
+            # Cluster density
+            data[i, col_density] = cluster_sizes.mean() / len(price_samples)
 
-        return result
+        return pd.DataFrame(data, index=bars.index, columns=self.feature_names)
