@@ -85,9 +85,10 @@ class OrderFlowExtractor(BaseFeatureExtractor):
         volume = bars["volume"].values.astype(np.float64)
 
         bar_range = high - low
+        safe_range = np.where(bar_range > 0, bar_range, 1.0)
         close_position = np.where(
             bar_range > 0,
-            (close - low) / bar_range * 2 - 1,
+            (close - low) / safe_range * 2 - 1,
             0.0,
         )
 

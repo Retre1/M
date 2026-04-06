@@ -1,8 +1,8 @@
 curriculum:
   stages:
     - name: synthetic_clean
-      description: "Clean synthetic data with clear regimes"
-      total_timesteps: 200000
+      description: "Clean synthetic data — learn basic patterns without noise"
+      total_timesteps: 500000
       data_source: synthetic
       synthetic_params:
         n_steps: 20000
@@ -12,8 +12,8 @@ curriculum:
         black_swan_intensity: 0.0
 
     - name: noisy_real
-      description: "Noisy synthetic + simple real data"
-      total_timesteps: 400000
+      description: "Noisy synthetic + real data — transfer to real market dynamics"
+      total_timesteps: 1000000
       data_source: mixed
       synthetic_params:
         noise_std: 0.005
@@ -21,13 +21,24 @@ curriculum:
       warm_start: true
 
     - name: full_real
-      description: "Full real data with black swans"
-      total_timesteps: 600000
+      description: "Full real data with black swans — production readiness"
+      total_timesteps: 2000000
       data_source: real
       synthetic_params:
         black_swan_intensity: 0.001
         black_swan_magnitude_std: 5.0
       warm_start: true
+
+# Reward function: HoldAwareReward prevents churn + rewards profitable holds
+reward:
+  type: HoldAwareReward
+  params:
+    eta: 0.01
+    lambda_dd: 1.5              # reduced from 2.0 — less DD pressure
+    hold_bonus_per_step: 0.002  # reward for holding winners
+    churn_penalty: 0.1          # doubled — penalize closing too early
+    z_score_bonus_weight: 0.1
+    min_hold_bars: 5            # minimum 5 bars (5 hours for H1)
 
 walk_forward:
   train_window_days: 252
