@@ -671,8 +671,17 @@ class Trainer:
         state = torch.load(cache, map_location="cpu", weights_only=True)
         extractor = model.policy.features_extractor
 
+        if extractor is None:
+            logger.warning("features_extractor is None, skipping TFT weight loading")
+            return
+
+        hive_mind = getattr(extractor, "hive_mind", None)
+        if hive_mind is None:
+            logger.warning("hive_mind not found on extractor, skipping TFT weight loading")
+            return
+
         # HiveMindExtractor.hive_mind.tft or MTFHiveMindExtractor.hive_mind.tft
-        tft_module = extractor.hive_mind.tft
+        tft_module = hive_mind.tft
         try:
             tft_module.load_state_dict(state, strict=False)
             logger.info("Applied pre-trained TFT weights to SB3 model")
