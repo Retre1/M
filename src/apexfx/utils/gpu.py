@@ -267,7 +267,7 @@ def log_gpu_memory(prefix: str = "") -> dict[str, float]:
     for i in range(torch.cuda.device_count()):
         allocated = torch.cuda.memory_allocated(i) / 1e9
         reserved = torch.cuda.memory_reserved(i) / 1e9
-        total = torch.cuda.get_device_properties(i).total_mem / 1e9
+        total = torch.cuda.get_device_properties(i).total_memory / 1e9
         utilization = allocated / total * 100
 
         stats[f"gpu{i}_allocated_gb"] = round(allocated, 2)
