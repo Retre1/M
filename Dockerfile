@@ -43,23 +43,38 @@ RUN pip install --no-cache-dir \
     torch>=2.0 \
     --index-url https://download.pytorch.org/whl/cu124
 
-# Project deps
-COPY pyproject.toml ./
-RUN pip install --no-cache-dir ".[dev]" \
-    && pip install --no-cache-dir \
-    sb3-contrib>=2.0 \
-    yfinance>=0.2 \
-    rich>=13.0
+# Project deps — install from pyproject.toml requirements directly
+RUN pip install --no-cache-dir \
+    "gymnasium>=0.29" \
+    "stable-baselines3>=2.0" \
+    "pandas>=2.0" \
+    "numpy>=1.24" \
+    "scipy>=1.11" \
+    "scikit-learn>=1.3" \
+    "PyWavelets>=1.4" \
+    "pyarrow>=14.0" \
+    "pydantic>=2.0" \
+    "pyyaml>=6.0" \
+    "structlog>=23.0" \
+    "requests>=2.31" \
+    "beautifulsoup4>=4.12" \
+    "sb3-contrib>=2.0" \
+    "yfinance>=0.2" \
+    "rich>=13.0" \
+    "optuna>=3.4" \
+    "tensorboard>=2.15" \
+    "pytest>=7.4"
 
 # ---------- Stage 3: Application ----------
 FROM deps AS app
 
+COPY pyproject.toml ./
 COPY src/ ./src/
 COPY scripts/ ./scripts/
 COPY configs/ ./configs/
 COPY tests/ ./tests/
 
-# Install package
+# Install package in editable mode (src/ now available)
 RUN pip install --no-cache-dir -e .
 
 # Create runtime directories
