@@ -6,7 +6,6 @@ import argparse
 
 from apexfx.config.registry import init_config
 from apexfx.data.data_store import DataStore
-from apexfx.features.pipeline import FeaturePipeline
 from apexfx.training.trainer import Trainer
 from apexfx.utils.logging import get_logger, setup_logging
 
@@ -46,10 +45,10 @@ def main() -> None:
             logger.warning("No real data found, training with synthetic data only")
             real_data = None
         else:
-            # Compute features on real data
-            pipeline = FeaturePipeline()
-            real_data = pipeline.compute(real_data)
-            logger.info("Real data loaded and features computed", n_bars=len(real_data))
+            logger.info("Real data loaded", n_bars=len(real_data))
+            # NOTE: features are computed inside Trainer per-stage (after
+            # curriculum augmentation and MTF resampling) to avoid
+            # double-computation and ensure features match augmented data.
 
     # Run training
     trainer = Trainer(config, real_data=real_data)
