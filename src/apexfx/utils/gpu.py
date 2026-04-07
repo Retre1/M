@@ -44,13 +44,13 @@ def setup_cuda_optimizations(device: str = "cuda") -> dict[str, Any]:
         props = torch.cuda.get_device_properties(i)
         logger.info(
             f"GPU {i}: {props.name}",
-            vram_gb=round(props.total_mem / 1e9, 1),
+            vram_gb=round(props.total_memory / 1e9, 1),
             compute_capability=f"{props.major}.{props.minor}",
             sm_count=props.multi_processor_count,
         )
         optimizations[f"gpu_{i}"] = {
             "name": props.name,
-            "vram_gb": round(props.total_mem / 1e9, 1),
+            "vram_gb": round(props.total_memory / 1e9, 1),
             "compute_capability": f"{props.major}.{props.minor}",
         }
 
