@@ -74,8 +74,8 @@ COPY scripts/ ./scripts/
 COPY configs/ ./configs/
 COPY tests/ ./tests/
 
-# Install package in editable mode (src/ now available)
-RUN pip install --no-cache-dir -e .
+# Install package (create README if missing, add src to path)
+RUN touch README.md && pip install --no-cache-dir -e .
 
 # Create runtime directories
 RUN mkdir -p data/raw/bars data/cache \
