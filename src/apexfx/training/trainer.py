@@ -76,6 +76,9 @@ class Trainer:
         self._config = config
         self._real_data = real_data
         self._feature_pipeline = FeaturePipeline()
+        # Lightweight pipeline for M5 data (100K+ bars) — skips O(n²)
+        # HurstExtractor and SpectralExtractor that would take hours.
+        self._feature_pipeline_fast = FeaturePipeline.lightweight()
         self._feature_selector = FeatureSelector(top_n=15)
         self._device = self._resolve_device()
         self._model: TQC | SAC | PPO | None = None
@@ -486,7 +489,9 @@ class Trainer:
         h1_features = self._feature_pipeline.compute(h1_data)
         logger.info("H1 features ready", n_bars=len(h1_features))
 
-        m5_features = self._feature_pipeline.compute(m5_data)
+        # Use lightweight pipeline for M5 (134K+ bars) — skip Hurst/Spectral
+        # which are O(n·window) per-bar loops and would take hours.
+        m5_features = self._feature_pipeline_fast.compute(m5_data)
         logger.info("M5 features ready", n_bars=len(m5_features))
 
         # Feature selection: fit on H1 (primary timeframe), apply to all
