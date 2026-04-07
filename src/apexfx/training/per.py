@@ -185,8 +185,11 @@ class PERCallback(BaseCallback):
             dones = replay_data.dones
 
             # Get current Q-values
-            features = model.policy.features_extractor(obs)
-            next_features = model.policy.features_extractor(next_obs)
+            extractor = model.policy.features_extractor
+            if extractor is None:
+                return
+            features = extractor(obs)
+            next_features = extractor(next_obs)
 
             # Use critic to estimate TD error
             if hasattr(model.policy, "critic"):
