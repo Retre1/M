@@ -64,7 +64,8 @@ RUN pip install --no-cache-dir \
     "rich>=13.0" \
     "optuna>=3.4" \
     "tensorboard>=2.15" \
-    "pytest>=7.4"
+    "pytest>=7.4" \
+    "tzdata>=2024.1"
 
 # ---------- Stage 3: Application ----------
 FROM deps AS app
