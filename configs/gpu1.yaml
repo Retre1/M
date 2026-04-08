@@ -1,9 +1,10 @@
 # ============================================================================
 # ApexFX Overlay — Single RTX 4090 (24GB VRAM)
 #
-# Base config targets 2× RTX 4090 (96GB total). This overlay reduces
-# memory footprint to fit in a single 24GB card while maintaining
-# training quality.
+# Fixes:
+# 1. VRAM: d_model 128→64, batch 2048→256, n_envs 16→4
+# 2. Entropy collapse: ent_coef fixed at 0.02 (no auto-decay to 0)
+# 3. Reward: scale 1000→200, penalties reduced (see trainer.py)
 #
 # Usage: APEXFX_ENV=gpu1 python scripts/train.py ...
 # ============================================================================
@@ -11,14 +12,14 @@
 base:
   performance:
     n_envs: 4               # 16→4: fewer envs to save GPU memory
-    gradient_checkpointing: true  # save VRAM via recomputation
-    torch_compile: false     # compile uses extra VRAM for cached graphs
+    gradient_checkpointing: true
+    torch_compile: false
 
 model:
   tft:
-    d_model: 64              # 128→64: 4× less VRAM in encoder
-    n_heads: 4               # 8→4: matches d_model
-    attention_head_size: 16  # 32→16: matches d_model/n_heads
+    d_model: 64
+    n_heads: 4
+    attention_head_size: 16
 
   agents:
     trend:
@@ -30,26 +31,28 @@ model:
     hidden_sizes: [128, 64]
 
   rl:
-    batch_size: 256          # 2048→256: TQC 25 quantiles × 256 batch fits
-    buffer_size: 200000      # 2M→200K: replay buffer in RAM not GPU
-    gradient_steps: 1        # 2→1: less VRAM per step
+    batch_size: 256
+    buffer_size: 200000
+    gradient_steps: 1
     learning_starts: 5000
-    n_quantiles: 10          # 25→10: major VRAM savings (10 critic heads vs 25)
+    n_quantiles: 10
+    # Fixed entropy coefficient — prevents collapse to 0
+    # With auto, TQC drove ent_coef from 0.9→0.005 in 100K steps,
+    # killing exploration. Fixed 0.02 maintains healthy exploration.
+    ent_coef: 0.02
 
   mtf:
     lookback:
-      d1: 20                 # 30→20: reduce attention memory
-      h1: 60                 # 120→60: halve H1 lookback
-      m5: 30                 # 60→30: halve M5 lookback
+      d1: 20
+      h1: 60
+      m5: 30
 
   uncertainty:
-    n_samples: 5             # 20→5: minimal MC dropout
-    enabled: false           # disable to save memory
+    enabled: false
 
   diversity:
-    batch_size: 128          # 512→128
-    enabled: false           # disable to save memory during training
+    enabled: false
 
 training:
   world_model:
-    enabled: false           # 7-model ensemble eats ~3GB VRAM
+    enabled: false
