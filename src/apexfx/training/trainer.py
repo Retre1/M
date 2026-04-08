@@ -76,9 +76,6 @@ class Trainer:
         self._config = config
         self._real_data = real_data
         self._feature_pipeline = FeaturePipeline()
-        # Lightweight pipeline for M5 data (100K+ bars) — skips O(n²)
-        # HurstExtractor and SpectralExtractor that would take hours.
-        self._feature_pipeline_fast = FeaturePipeline.lightweight()
         self._feature_selector = FeatureSelector(top_n=15)
         self._device = self._resolve_device()
         self._model: TQC | SAC | PPO | None = None
@@ -489,9 +486,25 @@ class Trainer:
         h1_features = self._feature_pipeline.compute(h1_data)
         logger.info("H1 features ready", n_bars=len(h1_features))
 
-        # Use lightweight pipeline for M5 (134K+ bars) — skip Hurst/Spectral
-        # which are O(n·window) per-bar loops and would take hours.
-        m5_features = self._feature_pipeline_fast.compute(m5_data)
+        # Subsample M5 if too large (134K+ bars with O(n·window) Hurst/Spectral
+        # extractors would take hours). Compute full features on subsample,
+        # then reindex back to full resolution with forward-fill.
+        _M5_MAX_BARS = 30_000
+        if len(m5_data) > _M5_MAX_BARS:
+            step = max(1, len(m5_data) // _M5_MAX_BARS)
+            m5_sampled = m5_data.iloc[::step]
+            logger.info(
+                "Subsampling M5 for feature computation",
+                original=len(m5_data),
+                sampled=len(m5_sampled),
+                step=step,
+            )
+            m5_features = self._feature_pipeline.compute(m5_sampled)
+            # Reindex to full M5 resolution and forward-fill
+            m5_features = m5_features.reindex(m5_data.index, method="ffill")
+            m5_features = m5_features.bfill()  # fill leading NaN
+        else:
+            m5_features = self._feature_pipeline.compute(m5_data)
         logger.info("M5 features ready", n_bars=len(m5_features))
 
         # Feature selection: fit on H1 (primary timeframe), apply to all
