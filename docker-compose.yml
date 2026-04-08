@@ -19,6 +19,7 @@ services:
     environment:
       - PYTHONPATH=/app/src
       - NVIDIA_VISIBLE_DEVICES=all
+      - APEXFX_ENV=gpu1
     volumes:
       - ./data:/app/data
       - ./models:/app/models
