@@ -10,7 +10,7 @@
 
 base:
   performance:
-    n_envs: 8               # 16→8: halve envs for single GPU
+    n_envs: 4               # 16→4: fewer envs to save GPU memory
     gradient_checkpointing: true  # save VRAM via recomputation
     torch_compile: false     # compile uses extra VRAM for cached graphs
 
@@ -30,13 +30,26 @@ model:
     hidden_sizes: [128, 64]
 
   rl:
-    batch_size: 512          # 2048→512: fits in 24GB
-    buffer_size: 500000      # 2M→500K: saves RAM, still diverse
+    batch_size: 256          # 2048→256: TQC 25 quantiles × 256 batch fits
+    buffer_size: 200000      # 2M→200K: replay buffer in RAM not GPU
     gradient_steps: 1        # 2→1: less VRAM per step
     learning_starts: 5000
+    n_quantiles: 10          # 25→10: major VRAM savings (10 critic heads vs 25)
+
+  mtf:
+    lookback:
+      d1: 20                 # 30→20: reduce attention memory
+      h1: 60                 # 120→60: halve H1 lookback
+      m5: 30                 # 60→30: halve M5 lookback
 
   uncertainty:
-    n_samples: 10            # 20→10: halve MC dropout samples
+    n_samples: 5             # 20→5: minimal MC dropout
+    enabled: false           # disable to save memory
 
   diversity:
-    batch_size: 256          # 512→256
+    batch_size: 128          # 512→128
+    enabled: false           # disable to save memory during training
+
+training:
+  world_model:
+    enabled: false           # 7-model ensemble eats ~3GB VRAM
