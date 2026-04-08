@@ -567,7 +567,16 @@ class Trainer:
                     max_position_pct=risk_cfg.position_sizing.max_position_pct,
                     n_market_features=n_features,
                     lookback=self._config.data.feature_window,
-                    reward_fn=TradingReward(loss_weight=2.0, reward_scale=1000.0),
+                    reward_fn=TradingReward(
+                        loss_weight=1.5,         # 2.0→1.5: less asymmetric
+                        reward_scale=200.0,       # 1000→200: reduce gradient noise
+                        churn_penalty=0.05,       # 0.3→0.05: stop punishing exits
+                        cvar_weight=0.1,          # 0.5→0.1: less tail-risk penalty
+                        spread_cost_pips=0.8,     # 1.5→0.8: realistic for majors
+                        hold_bonus=0.1,           # 0.05→0.1: reward holding winners
+                        hold_winner_bonus=0.15,   # 0.1→0.15: "let winners run"
+                        quick_cut_bonus=0.3,      # 0.2→0.3: "cut losers fast"
+                    ),
                     max_drawdown_pct=0.15,
                 )
 
@@ -854,7 +863,16 @@ class Trainer:
                     d1_lookback=mtf_cfg.lookback.d1,
                     h1_lookback=mtf_cfg.lookback.h1,
                     m5_lookback=mtf_cfg.lookback.m5,
-                    reward_fn=TradingReward(loss_weight=2.0, reward_scale=1000.0),
+                    reward_fn=TradingReward(
+                        loss_weight=1.5,         # 2.0→1.5: less asymmetric
+                        reward_scale=200.0,       # 1000→200: reduce gradient noise
+                        churn_penalty=0.05,       # 0.3→0.05: stop punishing exits
+                        cvar_weight=0.1,          # 0.5→0.1: less tail-risk penalty
+                        spread_cost_pips=0.8,     # 1.5→0.8: realistic for majors
+                        hold_bonus=0.1,           # 0.05→0.1: reward holding winners
+                        hold_winner_bonus=0.15,   # 0.1→0.15: "let winners run"
+                        quick_cut_bonus=0.3,      # 0.2→0.3: "cut losers fast"
+                    ),
                     max_drawdown_pct=0.15,
                 )
 
