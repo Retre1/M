@@ -1234,7 +1234,10 @@ class Trainer:
             step_count = 0
 
             while not done:
-                action, _ = self._model.predict(obs, deterministic=True)
+                # Use stochastic policy — deterministic=True produces near-zero
+                # mean actions that fall in the dead zone, resulting in 0 trades.
+                # The trained policy relies on entropy noise for trade generation.
+                action, _ = self._model.predict(obs, deterministic=False)
                 obs, reward, terminated, truncated, info = eval_env.step(action)
                 done = terminated or truncated
 
