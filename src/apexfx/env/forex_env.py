@@ -628,7 +628,7 @@ class ForexTradingEnv(gym.Env):
         row = self._data.iloc[self._current_idx]
         current_price = row["open"] if "open" in row.index else row["close"]
 
-        if abs(action) < 0.05:
+        if abs(action) < 0.01:
             target_direction = 0
             target_size = 0.0
         else:
