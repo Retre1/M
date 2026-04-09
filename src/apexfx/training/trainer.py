@@ -301,11 +301,28 @@ class Trainer:
             )
             logger.info("Stage complete", stage=stage_data.stage_idx)
 
+        # If all stages were skipped (resume after full training),
+        # load the model from the checkpoint for backtest/evaluation.
+        if self._model is None and resume_state is not None:
+            model_path = resume_state.model_path
+            if model_path and Path(model_path).exists():
+                rl_cfg = self._config.model.rl
+                algo_map = {"TQC": TQC, "SAC": SAC, "PPO": PPO}
+                algo_cls = algo_map.get(rl_cfg.algorithm.value, TQC)
+                logger.info("Loading trained model for backtest", path=str(model_path))
+                self._model = algo_cls.load(
+                    str(model_path).replace(".zip", ""),
+                    device=self._device,
+                )
+
         # Save final model
         best_path = Path(self._config.base.paths.models_dir) / "best"
         best_path.mkdir(parents=True, exist_ok=True)
-        self._model.save(str(best_path / "final_model"))
-        logger.info("Training complete")
+        if self._model is not None:
+            self._model.save(str(best_path / "final_model"))
+            logger.info("Training complete — model saved")
+        else:
+            logger.warning("No model available to save")
 
         # Auto-backtest after training
         self._run_backtest(best_path)
