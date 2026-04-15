@@ -392,16 +392,20 @@ class TrainerV2:
         enriched = self._ensure_features(stage_data.data)
 
         try:
+            from stable_baselines3.common.monitor import Monitor
             from stable_baselines3.common.vec_env import DummyVecEnv
             from apexfx.env.forex_env import ForexTradingEnv
 
             def make_env():
-                return ForexTradingEnv(
+                env = ForexTradingEnv(
                     data=enriched,
                     initial_balance=100_000.0,
                     reward_fn=reward_fn,
                     max_drawdown_pct=0.15,
                 )
+                # Monitor exposes episode stats in info["episode"], which
+                # CurriculumV2Callback consumes for ep_rew_mean / sharpe.
+                return Monitor(env)
 
             return DummyVecEnv([make_env])
         except ImportError:

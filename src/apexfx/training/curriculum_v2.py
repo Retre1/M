@@ -490,16 +490,35 @@ class DataBlender:
         return synthetic
 
     def _compute_fsd(self, data: pd.DataFrame) -> np.ndarray | None:
-        """Compute FSD regime features if available."""
+        """Compute FSD regime features if the data has enough numeric columns.
+
+        FSDCalculator requires ≥3 numeric (non-OHLCV) feature columns to
+        measure cross-sectional skewness dispersion. If the stage data has
+        only raw bars, skip gracefully instead of crashing.
+        """
         try:
             from apexfx.data.features import FSDCalculator
-            calc = FSDCalculator()
-            if "close" in data.columns:
-                fsd_df = calc.compute(data[["close"]])
-                return fsd_df.values
         except ImportError:
             logger.debug("FSDCalculator not available")
-        return None
+            return None
+
+        # Count eligible numeric columns (exclude OHLCV)
+        excluded = {"open", "high", "low", "close", "volume", "time"}
+        numeric = data.select_dtypes(include=[np.number]).columns
+        eligible = [c for c in numeric if c not in excluded]
+        if len(eligible) < 3:
+            logger.info(
+                "Skipping FSD — insufficient feature columns",
+                n_eligible=len(eligible),
+            )
+            return None
+
+        try:
+            fsd_df = FSDCalculator().compute(data)
+            return fsd_df.values
+        except Exception as e:
+            logger.warning("FSD computation failed", error=str(e))
+            return None
 
     def _add_noise(self, data: pd.DataFrame, noise_std: float) -> pd.DataFrame:
         """Add Gaussian noise to all numeric columns."""
