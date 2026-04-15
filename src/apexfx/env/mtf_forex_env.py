@@ -156,6 +156,9 @@ class MTFForexTradingEnv(ForexTradingEnv):
         self._total_trades = 0
         self._trade_returns = []
         self._equity_curve = [self._initial_balance]
+        self._step_realized_pnl = 0.0
+        self._action_queue = []
+        self._position_layers = []
         self._reward_fn.reset()
         self._stop_loss.reset()
 

@@ -25,6 +25,7 @@ from apexfx.env.obs_builder import ObservationBuilder
 from apexfx.env.reward import (
     BaseRewardFunction,
     HoldAwareReward,
+    ProfitFocusedReward,
     QuantumZScoreReward,
     TradingReward,
 )
@@ -405,6 +406,9 @@ class ForexTradingEnv(gym.Env):
         self._total_trades: int = 0
         self._trade_returns: list[float] = []
         self._equity_curve: list[float] = []
+        # Realized PnL produced during the current step (reset each step,
+        # accumulated by _close_position). Used by ProfitFocusedReward.
+        self._step_realized_pnl: float = 0.0
         # Pending action queue for execution delay simulation
         self._action_queue: list[float] = []
         # Position layer tracking for pyramiding
@@ -434,6 +438,7 @@ class ForexTradingEnv(gym.Env):
         self._total_trades = 0
         self._trade_returns = []
         self._equity_curve = [self._initial_balance]
+        self._step_realized_pnl = 0.0
         self._reward_fn.reset()
         self._stop_loss.reset()
         self._action_queue = []
@@ -449,6 +454,8 @@ class ForexTradingEnv(gym.Env):
         action_value = float(np.clip(action[0], -1.0, 1.0))
 
         prev_portfolio = self._portfolio_value
+        # Reset per-step realized PnL accumulator before any close happens
+        self._step_realized_pnl = 0.0
 
         # --- Advance market FIRST (look-ahead bias fix) ---
         # Action is decided based on current bar, but executed after delay
@@ -480,7 +487,15 @@ class ForexTradingEnv(gym.Env):
                 self._close_position(current_price)
 
         # --- Feed position state to reward function ---
-        if isinstance(self._reward_fn, TradingReward):
+        if isinstance(self._reward_fn, ProfitFocusedReward):
+            self._reward_fn.set_trade_info(
+                action=action_value,
+                direction=self._position_direction,
+                unrealized_pnl=self._unrealized_pnl,
+                time_in_position=self._time_in_position,
+                realized_pnl_this_step=self._step_realized_pnl,
+            )
+        elif isinstance(self._reward_fn, TradingReward):
             # Check fundamental/structure features for reward signals
             news_active = False
             structure_aligned = False
@@ -693,6 +708,10 @@ class ForexTradingEnv(gym.Env):
         cost = self._get_transaction_cost(self._position)
 
         self._cash += pnl - cost
+
+        # Accumulate realized PnL (net of close costs) for the current step.
+        # ProfitFocusedReward consumes this to deliver the trade-close signal.
+        self._step_realized_pnl += pnl - cost
 
         # Record trade return (for Kelly criterion)
         notional = self._entry_price * self._position * self._contract_size

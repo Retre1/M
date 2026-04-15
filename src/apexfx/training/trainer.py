@@ -26,7 +26,7 @@ from apexfx.data.mtf_synthetic import resample_real_data
 from apexfx.env.forex_env import ForexTradingEnv
 from apexfx.env.mtf_forex_env import MTFForexTradingEnv
 from apexfx.env.reward import (
-    TradingReward,
+    ProfitFocusedReward,
 )
 from apexfx.env.wrappers import MonitorWrapper, NormalizeReward
 from apexfx.features.pipeline import FeaturePipeline
@@ -584,15 +584,16 @@ class Trainer:
                     max_position_pct=risk_cfg.position_sizing.max_position_pct,
                     n_market_features=n_features,
                     lookback=self._config.data.feature_window,
-                    reward_fn=TradingReward(
-                        loss_weight=1.5,         # 2.0→1.5: less asymmetric
-                        reward_scale=200.0,       # 1000→200: reduce gradient noise
-                        churn_penalty=0.05,       # 0.3→0.05: stop punishing exits
-                        cvar_weight=0.1,          # 0.5→0.1: less tail-risk penalty
-                        spread_cost_pips=0.8,     # 1.5→0.8: realistic for majors
-                        hold_bonus=0.1,           # 0.05→0.1: reward holding winners
-                        hold_winner_bonus=0.15,   # 0.1→0.15: "let winners run"
-                        quick_cut_bonus=0.3,      # 0.2→0.3: "cut losers fast"
+                    # ProfitFocusedReward: realized PnL dominates (clean gradient)
+                    reward_fn=ProfitFocusedReward(
+                        realized_pnl_weight=3000.0,
+                        unrealized_delta_weight=400.0,
+                        trade_cost=0.05,
+                        inactivity_penalty=0.002,
+                        inactivity_grace=30,
+                        max_inactivity_bars=150,
+                        loss_asymmetry=1.15,
+                        reward_clip=25.0,
                     ),
                     max_drawdown_pct=0.15,
                 )
@@ -880,15 +881,16 @@ class Trainer:
                     d1_lookback=mtf_cfg.lookback.d1,
                     h1_lookback=mtf_cfg.lookback.h1,
                     m5_lookback=mtf_cfg.lookback.m5,
-                    reward_fn=TradingReward(
-                        loss_weight=1.5,         # 2.0→1.5: less asymmetric
-                        reward_scale=200.0,       # 1000→200: reduce gradient noise
-                        churn_penalty=0.05,       # 0.3→0.05: stop punishing exits
-                        cvar_weight=0.1,          # 0.5→0.1: less tail-risk penalty
-                        spread_cost_pips=0.8,     # 1.5→0.8: realistic for majors
-                        hold_bonus=0.1,           # 0.05→0.1: reward holding winners
-                        hold_winner_bonus=0.15,   # 0.1→0.15: "let winners run"
-                        quick_cut_bonus=0.3,      # 0.2→0.3: "cut losers fast"
+                    # ProfitFocusedReward: realized PnL dominates (clean gradient)
+                    reward_fn=ProfitFocusedReward(
+                        realized_pnl_weight=3000.0,
+                        unrealized_delta_weight=400.0,
+                        trade_cost=0.05,
+                        inactivity_penalty=0.002,
+                        inactivity_grace=30,
+                        max_inactivity_bars=150,
+                        loss_asymmetry=1.15,
+                        reward_clip=25.0,
                     ),
                     max_drawdown_pct=0.15,
                 )
