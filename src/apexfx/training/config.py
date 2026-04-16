@@ -66,6 +66,58 @@ class CheckpointStrategyConfig(BaseModel, frozen=True):
     save_latest: bool = True
 
 
+class VecEnvConfig(BaseModel, frozen=True):
+    """Vectorized environment configuration.
+
+    ``n_envs`` parallel copies of the env run rollouts concurrently.
+    With ``kind="subproc"`` each env lives in its own Python process,
+    which side-steps the GIL and scales nearly linearly with CPU cores.
+    ``kind="dummy"`` keeps all envs in the main process — fine for
+    debugging and for machines with a single core.
+    """
+    n_envs: int = 1
+    kind: Literal["dummy", "subproc"] = "dummy"
+    # If multi-symbol training is used and n_envs > len(symbols),
+    # env slots wrap round-robin across symbols.
+    start_method: Literal["spawn", "fork", "forkserver"] | None = None
+
+
+class ReplayBufferConfig(BaseModel, frozen=True):
+    """Off-policy replay buffer sizing.
+
+    ``buffer_size`` directly controls RAM usage — each transition is
+    roughly ``(obs_bytes + next_obs_bytes + action + reward + done)``.
+    For a 3546-float32 Dict observation this is ~30 KB per sample, so
+    1M transitions ≈ 30 GB, 5M ≈ 150 GB.
+
+    ``learning_starts`` delays gradient updates until the buffer has
+    enough random experience to start training usefully.
+    """
+    buffer_size: int = 1_000_000
+    batch_size: int = 256
+    learning_starts: int = 10_000
+    train_freq: int = 1           # gradient step every N rollout steps
+    gradient_steps: int = 1
+    tau: float = 0.005
+    gamma: float = 0.99
+
+
+class MultiSymbolConfig(BaseModel, frozen=True):
+    """Multi-symbol training configuration.
+
+    When ``symbols`` has more than one entry, the trainer loads each
+    symbol's features independently and distributes them across
+    vec-env slots. Each parallel env trains on a different pair,
+    so the agent sees diverse market regimes per batch.
+    """
+    symbols: tuple[str, ...] = ("EURUSD",)
+    timeframe: str = "H1"
+    # When True the curriculum blending is applied per symbol; when
+    # False only the first symbol is blended and other symbols feed
+    # raw data into their env copies.
+    blend_per_symbol: bool = True
+
+
 class StageConfig(BaseModel, frozen=True):
     """Configuration for a single curriculum stage.
 
@@ -164,6 +216,9 @@ class CurriculumV2Config(BaseModel, frozen=True):
     checkpointing: CheckpointStrategyConfig = Field(
         default_factory=CheckpointStrategyConfig,
     )
+    vec_env: VecEnvConfig = Field(default_factory=VecEnvConfig)
+    replay_buffer: ReplayBufferConfig = Field(default_factory=ReplayBufferConfig)
+    multi_symbol: MultiSymbolConfig = Field(default_factory=MultiSymbolConfig)
 
     # World model integration
     world_model_enabled: bool = True

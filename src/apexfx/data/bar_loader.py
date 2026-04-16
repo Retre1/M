@@ -78,3 +78,50 @@ def load_bars(
         end=str(df["time"].max()),
     )
     return df
+
+
+def load_multi_symbol_features(
+    symbols: tuple[str, ...] | list[str],
+    timeframe: str = "H1",
+    cache_root: Path | str = "data/cache/features",
+    data_root: Path | str = "data/raw/bars",
+    fallback_to_raw: bool = True,
+) -> dict[str, pd.DataFrame]:
+    """Load cached features for each symbol, fall back to raw bars if missing.
+
+    Returns a dict keyed by symbol. Symbols with neither cached features
+    nor raw bars are skipped with a warning (not raised) so partial
+    multi-symbol runs remain possible.
+    """
+    result: dict[str, pd.DataFrame] = {}
+    for symbol in symbols:
+        df = load_features_cache(symbol, timeframe, cache_root)
+        if df is None and fallback_to_raw:
+            try:
+                df = load_bars(symbol, timeframe, data_root)
+                logger.warning(
+                    "Multi-symbol: features cache missing, loaded raw bars",
+                    symbol=symbol,
+                )
+            except FileNotFoundError as e:
+                logger.warning("Multi-symbol: symbol skipped", symbol=symbol,
+                               reason=str(e))
+                continue
+        if df is None:
+            logger.warning("Multi-symbol: symbol skipped (no data)", symbol=symbol)
+            continue
+        result[symbol] = df
+
+    if not result:
+        raise FileNotFoundError(
+            f"No data found for any of {list(symbols)} in either "
+            f"{cache_root} or {data_root}.",
+        )
+
+    logger.info(
+        "Multi-symbol data loaded",
+        symbols=list(result.keys()),
+        n_symbols=len(result),
+        total_bars=sum(len(d) for d in result.values()),
+    )
+    return result

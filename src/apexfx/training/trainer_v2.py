@@ -39,6 +39,39 @@ from apexfx.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+# ── Picklable env thunk factory (module-level for SubprocVecEnv) ──────
+
+def _make_env_thunk(
+    df: pd.DataFrame,
+    reward_fn_factory: Any,
+    seed: int,
+) -> Any:
+    """Return a zero-argument factory that builds a single Monitor-wrapped env.
+
+    Kept at module scope (not a closure inside ``TrainerV2``) so the thunk
+    pickles cleanly under ``SubprocVecEnv(start_method="spawn"|"forkserver")``,
+    which is required on macOS and on any Python build without fork.
+    """
+    def _thunk() -> Any:
+        from stable_baselines3.common.monitor import Monitor
+        from apexfx.env.forex_env import ForexTradingEnv
+
+        env = ForexTradingEnv(
+            data=df,
+            initial_balance=100_000.0,
+            reward_fn=reward_fn_factory(),
+            max_drawdown_pct=0.15,
+        )
+        try:
+            env.reset(seed=seed)
+        except TypeError:
+            # Older gym API without seed kwarg
+            pass
+        return Monitor(env)
+
+    return _thunk
+
+
 # ── Curriculum monitoring callback ───────────────────────────────────
 
 class CurriculumV2Callback(BaseCallback):
@@ -239,10 +272,12 @@ class TrainerV2:
         app_config: Any = None,
         real_data: pd.DataFrame | None = None,
         checkpoint_dir: Path | None = None,
+        multi_symbol_data: dict[str, pd.DataFrame] | None = None,
     ) -> None:
         self._curriculum_config = curriculum_config or CurriculumV2Config()
         self._app_config = app_config
         self._real_data = real_data
+        self._multi_symbol_data = multi_symbol_data or {}
 
         ckpt_dir = checkpoint_dir or Path("models/v2_checkpoints")
         self._curriculum = CurriculumV2(
@@ -259,11 +294,16 @@ class TrainerV2:
             "hurst_exponent", "trend_strength", "close_zscore",
         )
 
+        vec_cfg = self._curriculum_config.vec_env
         logger.info(
             "TrainerV2 initialized",
             n_stages=self._curriculum.n_stages,
             device=self._device,
             total_timesteps=self._curriculum_config.total_timesteps,
+            n_envs=vec_cfg.n_envs,
+            vec_kind=vec_cfg.kind,
+            buffer_size=self._curriculum_config.replay_buffer.buffer_size,
+            n_symbols=max(1, len(self._multi_symbol_data)),
         )
 
     def _resolve_device(self) -> str:
@@ -377,68 +417,149 @@ class TrainerV2:
         return self._feature_pipeline.compute(df)
 
     def _build_stage_env(self, stage_data: StageDataV2) -> Any:
-        """Build environment for a stage using RARAReward_v5.
+        """Build a (possibly parallel) vec-env for a stage.
 
-        Falls back to simple environment if full v2 components
-        are not available.
+        With ``vec_env.n_envs=1`` this returns a single DummyVecEnv —
+        backward-compatible with earlier behaviour. When ``n_envs>1``
+        the trainer builds N env copies; with ``kind="subproc"`` each
+        copy runs in its own process (good for multi-core servers).
+
+        When multi-symbol data is configured, env slots rotate through
+        the provided symbols so rollouts cover multiple markets.
         """
         try:
             from apexfx.env.reward_v5 import RARAReward_v5
-            reward_fn = RARAReward_v5()
+            reward_fn_factory = RARAReward_v5
         except ImportError:
             from apexfx.env.reward import ProfitFocusedReward
-            reward_fn = ProfitFocusedReward()
+            reward_fn_factory = ProfitFocusedReward
 
-        enriched = self._ensure_features(stage_data.data)
+        # Prepare per-env dataframes (features ensured once in main process).
+        vec_cfg = self._curriculum_config.vec_env
+        n_envs = max(1, vec_cfg.n_envs)
 
-        try:
-            from stable_baselines3.common.monitor import Monitor
-            from stable_baselines3.common.vec_env import DummyVecEnv
-            from apexfx.env.forex_env import ForexTradingEnv
+        per_env_data: list[tuple[str, pd.DataFrame]] = self._prepare_per_env_data(
+            stage_data=stage_data,
+            n_envs=n_envs,
+        )
 
-            def make_env():
-                env = ForexTradingEnv(
-                    data=enriched,
-                    initial_balance=100_000.0,
-                    reward_fn=reward_fn,
-                    max_drawdown_pct=0.15,
+        from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
+
+        base_seed = int(self._curriculum_config.seed)
+        env_fns = [
+            _make_env_thunk(
+                df=df,
+                reward_fn_factory=reward_fn_factory,
+                seed=base_seed + i,
+            )
+            for i, (_sym, df) in enumerate(per_env_data)
+        ]
+
+        if n_envs > 1 and vec_cfg.kind == "subproc":
+            vec_env = SubprocVecEnv(
+                env_fns,
+                start_method=vec_cfg.start_method,
+            )
+            logger.info(
+                "SubprocVecEnv built",
+                n_envs=n_envs,
+                symbols=[sym for sym, _ in per_env_data],
+            )
+        else:
+            vec_env = DummyVecEnv(env_fns)
+            if n_envs > 1:
+                logger.info(
+                    "DummyVecEnv built (n_envs>1 but kind=dummy)",
+                    n_envs=n_envs,
+                    symbols=[sym for sym, _ in per_env_data],
                 )
-                # Monitor exposes episode stats in info["episode"], which
-                # CurriculumV2Callback consumes for ep_rew_mean / sharpe.
-                return Monitor(env)
 
-            return DummyVecEnv([make_env])
-        except ImportError:
-            logger.error("Cannot build environment — missing dependencies")
-            raise
+        return vec_env
+
+    def _prepare_per_env_data(
+        self,
+        stage_data: StageDataV2,
+        n_envs: int,
+    ) -> list[tuple[str, pd.DataFrame]]:
+        """Return ``[(symbol, enriched_df), ...]`` of length ``n_envs``.
+
+        Multi-symbol mode (``multi_symbol_data`` non-empty):
+            Env slots rotate round-robin across the provided symbols.
+            Features are computed per symbol once; the curriculum's
+            blended ``stage_data.data`` is applied only to the primary
+            symbol (first key) to keep synthetic/FSD logic single-source.
+
+        Single-symbol mode:
+            All env slots share the blended ``stage_data.data``.
+        """
+        if len(self._multi_symbol_data) > 1:
+            symbols = list(self._multi_symbol_data.keys())
+            primary = symbols[0]
+            enriched_by_symbol: dict[str, pd.DataFrame] = {}
+            for sym in symbols:
+                if sym == primary:
+                    enriched_by_symbol[sym] = self._ensure_features(stage_data.data)
+                else:
+                    enriched_by_symbol[sym] = self._ensure_features(
+                        self._multi_symbol_data[sym],
+                    )
+            return [
+                (symbols[i % len(symbols)], enriched_by_symbol[symbols[i % len(symbols)]])
+                for i in range(n_envs)
+            ]
+
+        primary_sym = (
+            next(iter(self._multi_symbol_data.keys()))
+            if self._multi_symbol_data
+            else "primary"
+        )
+        enriched = self._ensure_features(stage_data.data)
+        return [(primary_sym, enriched) for _ in range(n_envs)]
 
     def _build_model(self, env: Any, stage_cfg: StageConfig) -> Any:
-        """Build SB3 model (TQC by default)."""
+        """Build SB3 model (TQC by default).
+
+        Replay buffer sizing, batch size and learning-starts come from
+        ``curriculum_config.replay_buffer`` — these directly control
+        RAM usage and sample efficiency on larger machines.
+        """
         import os
         tb_log = os.environ.get("SB3_TB_LOG_DIR")
+        buf = self._curriculum_config.replay_buffer
+        lr = stage_cfg.lr_override or self._curriculum_config.adaptive_lr.base_lr
+
+        common_kwargs = dict(
+            policy="MultiInputPolicy",
+            env=env,
+            learning_rate=lr,
+            buffer_size=buf.buffer_size,
+            batch_size=buf.batch_size,
+            learning_starts=buf.learning_starts,
+            train_freq=buf.train_freq,
+            gradient_steps=buf.gradient_steps,
+            tau=buf.tau,
+            gamma=buf.gamma,
+            device=self._device,
+            verbose=0,
+            tensorboard_log=tb_log,
+            seed=int(self._curriculum_config.seed),
+        )
+
         try:
             from sb3_contrib import TQC
-
-            lr = stage_cfg.lr_override or self._curriculum_config.adaptive_lr.base_lr
-            model = TQC(
-                "MultiInputPolicy",
-                env,
-                learning_rate=lr,
-                device=self._device,
-                verbose=0,
-                tensorboard_log=tb_log,
-            )
+            model = TQC(**common_kwargs)
             logger.info(
                 "TQC model built",
                 lr=lr,
                 device=self._device,
+                buffer_size=buf.buffer_size,
+                batch_size=buf.batch_size,
+                learning_starts=buf.learning_starts,
             )
             return model
         except ImportError:
             from stable_baselines3 import SAC
-            lr = stage_cfg.lr_override or self._curriculum_config.adaptive_lr.base_lr
-            return SAC("MultiInputPolicy", env, learning_rate=lr,
-                       device=self._device, tensorboard_log=tb_log)
+            return SAC(**common_kwargs)
 
     def _build_stage_callbacks(
         self, stage_idx: int, stage_cfg: StageConfig,

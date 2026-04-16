@@ -13,6 +13,17 @@ Usage::
 
     # TensorBoard logging
     python scripts/train_v2.py --tb-log-dir runs/v2_eurusd
+
+    # Use 16 parallel envs on a multi-core server
+    python scripts/train_v2.py --n-envs 16 --vec-kind subproc
+
+    # Multi-symbol training across four FX majors
+    python scripts/train_v2.py \\
+        --symbols EURUSD GBPUSD USDJPY AUDUSD \\
+        --n-envs 16 --vec-kind subproc
+
+    # Larger replay buffer (requires RAM — ~30 KB per transition)
+    python scripts/train_v2.py --buffer-size 5000000 --batch-size 512
 """
 
 from __future__ import annotations
@@ -21,7 +32,11 @@ import argparse
 import sys
 from pathlib import Path
 
-from apexfx.data.bar_loader import load_bars, load_features_cache
+from apexfx.data.bar_loader import (
+    load_bars,
+    load_features_cache,
+    load_multi_symbol_features,
+)
 from apexfx.training.config import (
     CurriculumV2Config,
     StageConfig,
@@ -64,9 +79,58 @@ def scale_config(cfg: CurriculumV2Config, total: int) -> CurriculumV2Config:
     return cfg.model_copy(update={"stages": new_stages})
 
 
+def apply_overrides(
+    cfg: CurriculumV2Config,
+    *,
+    n_envs: int | None,
+    vec_kind: str | None,
+    buffer_size: int | None,
+    batch_size: int | None,
+    learning_starts: int | None,
+    symbols: tuple[str, ...] | None,
+    timeframe: str | None,
+) -> CurriculumV2Config:
+    """Apply CLI overrides onto an immutable Pydantic config."""
+    update: dict = {}
+
+    if n_envs is not None or vec_kind is not None:
+        vec = cfg.vec_env
+        vec_update: dict = {}
+        if n_envs is not None:
+            vec_update["n_envs"] = n_envs
+        if vec_kind is not None:
+            vec_update["kind"] = vec_kind
+        update["vec_env"] = vec.model_copy(update=vec_update)
+
+    if any(v is not None for v in (buffer_size, batch_size, learning_starts)):
+        rb = cfg.replay_buffer
+        rb_update: dict = {}
+        if buffer_size is not None:
+            rb_update["buffer_size"] = buffer_size
+        if batch_size is not None:
+            rb_update["batch_size"] = batch_size
+        if learning_starts is not None:
+            rb_update["learning_starts"] = learning_starts
+        update["replay_buffer"] = rb.model_copy(update=rb_update)
+
+    if symbols is not None or timeframe is not None:
+        ms = cfg.multi_symbol
+        ms_update: dict = {}
+        if symbols is not None:
+            ms_update["symbols"] = tuple(symbols)
+        if timeframe is not None:
+            ms_update["timeframe"] = timeframe
+        update["multi_symbol"] = ms.model_copy(update=ms_update)
+
+    return cfg.model_copy(update=update) if update else cfg
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train v2 curriculum")
-    parser.add_argument("--symbol", default="EURUSD")
+    parser.add_argument("--symbol", default="EURUSD",
+                        help="Single-symbol shortcut (ignored if --symbols given)")
+    parser.add_argument("--symbols", nargs="+", default=None,
+                        help="Multiple symbols for parallel multi-symbol training")
     parser.add_argument("--timeframe", default="H1")
     parser.add_argument("--data-root", default="data/raw/bars")
     parser.add_argument("--features-cache", default="data/cache/features",
@@ -82,30 +146,66 @@ def main() -> None:
                         help="Override sum of stage timesteps")
     parser.add_argument("--no-cache", action="store_true",
                         help="Skip features cache (recompute on the fly)")
+    # Vec-env + replay buffer sizing
+    parser.add_argument("--n-envs", type=int, default=None,
+                        help="Number of parallel environments")
+    parser.add_argument("--vec-kind", choices=["dummy", "subproc"], default=None,
+                        help="Vec-env backend (subproc scales with CPU cores)")
+    parser.add_argument("--buffer-size", type=int, default=None,
+                        help="Replay buffer capacity in transitions")
+    parser.add_argument("--batch-size", type=int, default=None,
+                        help="SGD batch size for gradient updates")
+    parser.add_argument("--learning-starts", type=int, default=None,
+                        help="Delay gradient updates until buffer has N samples")
     args = parser.parse_args()
 
-    # 1. Load data — prefer cached features for speed
+    symbols = tuple(args.symbols) if args.symbols else (args.symbol,)
+
+    # 1. Load data — multi- or single-symbol
     real_data = None
-    if not args.no_cache:
-        real_data = load_features_cache(args.symbol, args.timeframe,
-                                        args.features_cache)
-    if real_data is None:
-        logger.info("No cache — loading raw bars",
-                    symbol=args.symbol, timeframe=args.timeframe)
-        real_data = load_bars(args.symbol, args.timeframe, args.data_root)
-        logger.warning(
-            "Features will be computed at stage build (slow). "
-            "Run scripts/cache_features_v2.py beforehand on the server.",
+    multi_symbol_data: dict = {}
+    if len(symbols) > 1:
+        multi_symbol_data = load_multi_symbol_features(
+            symbols=symbols,
+            timeframe=args.timeframe,
+            cache_root=args.features_cache,
+            data_root=args.data_root,
         )
+        # primary symbol's frame feeds curriculum blending
+        real_data = multi_symbol_data[symbols[0]]
+    else:
+        if not args.no_cache:
+            real_data = load_features_cache(args.symbol, args.timeframe,
+                                            args.features_cache)
+        if real_data is None:
+            logger.info("No cache — loading raw bars",
+                        symbol=args.symbol, timeframe=args.timeframe)
+            real_data = load_bars(args.symbol, args.timeframe, args.data_root)
+            logger.warning(
+                "Features will be computed at stage build (slow). "
+                "Run scripts/cache_features_v2.py beforehand on the server.",
+            )
 
     # 2. Optional truncation
     if args.max_bars is not None and len(real_data) > args.max_bars:
         real_data = real_data.tail(args.max_bars).reset_index(drop=True)
         logger.info("Truncated bars", n_bars=len(real_data))
+        if multi_symbol_data:
+            multi_symbol_data = {
+                s: d.tail(args.max_bars).reset_index(drop=True)
+                for s, d in multi_symbol_data.items()
+            }
     elif args.smoke and len(real_data) > 2500:
         real_data = real_data.tail(2500).reset_index(drop=True)
         logger.info("Smoke truncation", n_bars=len(real_data))
-    logger.info("Data ready", n_bars=len(real_data))
+        if multi_symbol_data:
+            multi_symbol_data = {
+                s: d.tail(2500).reset_index(drop=True)
+                for s, d in multi_symbol_data.items()
+            }
+    logger.info("Data ready",
+                n_bars=len(real_data),
+                n_symbols=len(multi_symbol_data) or 1)
 
     # 3. Config
     cfg = build_smoke_config() if args.smoke else CurriculumV2Config()
@@ -114,12 +214,33 @@ def main() -> None:
         logger.info("Scaled total timesteps",
                     total=args.total_timesteps,
                     per_stage=[s.total_timesteps for s in cfg.stages])
+    cfg = apply_overrides(
+        cfg,
+        n_envs=args.n_envs,
+        vec_kind=args.vec_kind,
+        buffer_size=args.buffer_size,
+        batch_size=args.batch_size,
+        learning_starts=args.learning_starts,
+        symbols=symbols if len(symbols) > 1 else None,
+        timeframe=args.timeframe,
+    )
+
+    logger.info(
+        "Effective runtime config",
+        n_envs=cfg.vec_env.n_envs,
+        vec_kind=cfg.vec_env.kind,
+        buffer_size=cfg.replay_buffer.buffer_size,
+        batch_size=cfg.replay_buffer.batch_size,
+        learning_starts=cfg.replay_buffer.learning_starts,
+        symbols=cfg.multi_symbol.symbols,
+    )
 
     # 4. Train
     trainer = TrainerV2(
         curriculum_config=cfg,
         real_data=real_data,
         checkpoint_dir=Path(args.checkpoint_dir),
+        multi_symbol_data=multi_symbol_data or None,
     )
 
     # Wire TB log dir if provided (set via env so SB3 picks it up)
