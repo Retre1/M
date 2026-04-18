@@ -113,7 +113,7 @@ class RARARewardV5Config(BaseModel, frozen=True):
     inactivity_weight: float = 0.0002
     inactivity_grace: int = 30
     max_inactivity_bars: int = 150
-    loss_asymmetry: float = 1.6
+    loss_asymmetry: float = 1.0
     reward_clip: float = 30.0
 
     # --- Jump risk (Paper 5: DML) ---
@@ -134,7 +134,7 @@ class RARARewardV5Config(BaseModel, frozen=True):
     structure_bonus_weight: float = 0.10
 
     # --- CVaR (Paper 3: Quantum Finance) ---
-    cvar_weight: float = 0.3
+    cvar_weight: float = 0.0
     cvar_alpha: float = 0.05
     cvar_window: int = 100
     cvar_min_samples: int = 20

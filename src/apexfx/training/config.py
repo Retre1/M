@@ -42,10 +42,10 @@ class MultiMetricEarlyStopConfig(BaseModel, frozen=True):
     Stops if ALL metrics fail to improve for `patience` evaluations.
     """
     enabled: bool = True
-    patience: int = 15
+    patience: int = 60
     min_delta_reward: float = 0.01
     min_delta_sharpe: float = 0.05
-    min_delta_profit_factor: float = 0.01
+    min_delta_profit_factor: float = -1.0
     check_freq: int = 10000
 
 
@@ -153,7 +153,7 @@ class CurriculumV2Config(BaseModel, frozen=True):
 
     Defines the 4-stage progression with all hyperparameters.
     """
-    seed: int = 42
+    seed: int = 7
     deterministic: bool = True
 
     stages: list[StageConfig] = Field(default_factory=lambda: [
