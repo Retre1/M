@@ -107,7 +107,7 @@ class RARARewardV5Config(BaseModel, frozen=True):
     """
 
     # --- Core PnL (from v4, retuned) ---
-    realized_pnl_weight: float = 2_000.0
+    realized_pnl_weight: float = 4_000.0
     unrealized_delta_weight: float = 500.0
     trade_cost_weight: float = 0.15
     inactivity_weight: float = 0.00005
