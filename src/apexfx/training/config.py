@@ -197,7 +197,7 @@ class CurriculumV2Config(BaseModel, frozen=True):
         StageConfig(
             name="real_adversarial",
             description="30% real + 70% SBBTS + full adversarial + jump-aware",
-            total_timesteps=1_000_000,
+            total_timesteps=500_000,
             real_ratio=0.30,
             sbbts_ratio=0.70,
             enable_dml_jumps=True,
@@ -205,7 +205,7 @@ class CurriculumV2Config(BaseModel, frozen=True):
             enable_adversarial=True,
             filter_quantile=None,
             warm_start=True,
-            noise_std=0.01,
+            noise_std=0.003,
         ),
     ])
 
