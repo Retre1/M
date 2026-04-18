@@ -107,14 +107,14 @@ class RARARewardV5Config(BaseModel, frozen=True):
     """
 
     # --- Core PnL (from v4, retuned) ---
-    realized_pnl_weight: float = 10_000.0
+    realized_pnl_weight: float = 2_000.0
     unrealized_delta_weight: float = 500.0
     trade_cost_weight: float = 0.15
-    inactivity_weight: float = 0.0002
+    inactivity_weight: float = 0.00005
     inactivity_grace: int = 30
     max_inactivity_bars: int = 150
     loss_asymmetry: float = 1.0
-    reward_clip: float = 30.0
+    reward_clip: float = 50.0
 
     # --- Jump risk (Paper 5: DML) ---
     jump_risk_weight: float = 0.5

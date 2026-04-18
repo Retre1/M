@@ -29,6 +29,7 @@ from apexfx.env.reward import (
     QuantumZScoreReward,
     TradingReward,
 )
+from apexfx.env.reward_v5 import RARAReward_v5
 
 
 class SpreadModel:
@@ -524,6 +525,32 @@ class ForexTradingEnv(gym.Env):
                 direction=self._position_direction,
                 unrealized_pnl=self._unrealized_pnl,
                 time_in_position=self._time_in_position,
+            )
+        elif isinstance(self._reward_fn, RARAReward_v5):
+            fsd_regime = 1
+            structure_aligned = False
+            current_price = 1.0
+            if self._current_idx < len(self._data):
+                row = self._data.iloc[self._current_idx]
+                if "close" in row.index:
+                    current_price = float(row["close"])
+                if "fsd_regime" in row.index:
+                    val = row["fsd_regime"]
+                    if not np.isnan(val):
+                        fsd_regime = int(val)
+                if "structure_break_bull" in row.index and "structure_break_bear" in row.index:
+                    bull = float(row.get("structure_break_bull", 0)) > 0.5
+                    bear = float(row.get("structure_break_bear", 0)) > 0.5
+                    if (self._position_direction > 0 and bull) or (self._position_direction < 0 and bear):
+                        structure_aligned = True
+            self._reward_fn.set_step_context(
+                position=float(self._position_direction) * float(self._position),
+                unrealized_pnl=self._unrealized_pnl,
+                realized_pnl=self._step_realized_pnl,
+                price=current_price,
+                time_in_position=self._time_in_position,
+                fsd_regime=fsd_regime,
+                structure_aligned=structure_aligned,
             )
 
         # --- Compute reward ---

@@ -539,6 +539,7 @@ class TrainerV2:
             gradient_steps=buf.gradient_steps,
             tau=buf.tau,
             gamma=buf.gamma,
+            ent_coef=0.1,
             device=self._device,
             verbose=0,
             tensorboard_log=tb_log,

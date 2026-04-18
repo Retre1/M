@@ -204,20 +204,26 @@ class TestGammaAwareBonus:
 class TestCVaRPenalty:
     """CVaR should penalise sequences with heavy left-tail losses."""
 
-    def test_losing_streak_triggers_cvar(self, reward_fn: RARAReward_v5) -> None:
+    @pytest.fixture
+    def reward_fn_cvar(self) -> RARAReward_v5:
+        """CVaR-enabled fixture (default config has cvar_weight=0 to isolate
+        other signals; this fixture restores CVaR for its dedicated tests)."""
+        return RARAReward_v5(RARARewardV5Config(cvar_weight=0.3))
+
+    def test_losing_streak_triggers_cvar(self, reward_fn_cvar: RARAReward_v5) -> None:
         """Consistent losses should produce a CVaR penalty."""
-        reward_fn.reset()
+        reward_fn_cvar.reset()
         val = 100_000.0
 
         # 30 losing steps
         for _ in range(30):
             new_val = val * 0.999  # -0.1% per step
-            reward_fn.set_step_context(position=1.0, unrealized_pnl=-100.0,
+            reward_fn_cvar.set_step_context(position=1.0, unrealized_pnl=-100.0,
                                         realized_pnl=0.0, price=1.10)
-            reward_fn.compute(new_val, val)
+            reward_fn_cvar.compute(new_val, val)
             val = new_val
 
-        cvar = reward_fn.last_components["reward/cvar_penalty"]
+        cvar = reward_fn_cvar.last_components["reward/cvar_penalty"]
         assert cvar < 0.0, f"CVaR penalty should be negative, got {cvar}"
 
     def test_winning_streak_no_cvar(self, reward_fn: RARAReward_v5) -> None:
