@@ -26,7 +26,7 @@ import pandas as pd
 from apexfx.backtest.result import BacktestResult, Trade
 from apexfx.config.schema import AppConfig, RiskConfig
 from apexfx.features.pipeline import FeaturePipeline
-from apexfx.risk.risk_manager import MarketState, RiskDecision, RiskManager
+from apexfx.risk.risk_manager import MarketState, RiskManager
 from apexfx.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -74,10 +74,6 @@ class BacktestConfig:
     symbol: str = "EURUSD"
     disable_risk: bool = False  # bypass risk manager (useful for strategy testing)
     default_volume: float = 0.1  # default lot size when risk manager is bypassed
-    min_position_floor: float = 0.0  # if > 0, floor position_size to this value
-                                     # when risk manager computes sub-minimum lots
-                                     # (useful in backtesting where scaling factors
-                                     # compound and reduce positions below broker minimum)
 
 
 class BacktestEngine:
@@ -203,24 +199,6 @@ class BacktestEngine:
                         uncertainty_score=None,
                         current_position=current_pos,
                     )
-
-                    # Apply position floor for backtesting: if risk manager
-                    # computed zero due to scaling but signal was valid, use floor
-                    if (
-                        not risk_decision.approved
-                        and self._config.min_position_floor > 0
-                        and risk_decision.reason == "Position size computed to zero"
-                        and abs(action) >= 0.05
-                    ):
-                        risk_decision = RiskDecision(
-                            approved=True,
-                            adjusted_action=risk_decision.adjusted_action or action,
-                            position_size=self._config.min_position_floor,
-                            reason="Floored to minimum (backtest mode)",
-                            checks_passed=risk_decision.checks_passed,
-                            checks_failed=[],
-                            var_scale=risk_decision.var_scale,
-                        )
 
                     self._result.record_risk_decision(
                         risk_decision.approved,

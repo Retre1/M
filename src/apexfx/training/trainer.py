@@ -301,28 +301,11 @@ class Trainer:
             )
             logger.info("Stage complete", stage=stage_data.stage_idx)
 
-        # If all stages were skipped (resume after full training),
-        # load the model from the checkpoint for backtest/evaluation.
-        if self._model is None and resume_state is not None:
-            model_path = resume_state.model_path
-            if model_path and Path(model_path).exists():
-                rl_cfg = self._config.model.rl
-                algo_map = {"TQC": TQC, "SAC": SAC, "PPO": PPO}
-                algo_cls = algo_map.get(rl_cfg.algorithm.value, TQC)
-                logger.info("Loading trained model for backtest", path=str(model_path))
-                self._model = algo_cls.load(
-                    str(model_path).replace(".zip", ""),
-                    device=self._device,
-                )
-
         # Save final model
         best_path = Path(self._config.base.paths.models_dir) / "best"
         best_path.mkdir(parents=True, exist_ok=True)
-        if self._model is not None:
-            self._model.save(str(best_path / "final_model"))
-            logger.info("Training complete — model saved")
-        else:
-            logger.warning("No model available to save")
+        self._model.save(str(best_path / "final_model"))
+        logger.info("Training complete")
 
         # Auto-backtest after training
         self._run_backtest(best_path)
@@ -503,25 +486,7 @@ class Trainer:
         h1_features = self._feature_pipeline.compute(h1_data)
         logger.info("H1 features ready", n_bars=len(h1_features))
 
-        # Subsample M5 if too large (134K+ bars with O(n·window) Hurst/Spectral
-        # extractors would take hours). Compute full features on subsample,
-        # then reindex back to full resolution with forward-fill.
-        _M5_MAX_BARS = 30_000
-        if len(m5_data) > _M5_MAX_BARS:
-            step = max(1, len(m5_data) // _M5_MAX_BARS)
-            m5_sampled = m5_data.iloc[::step]
-            logger.info(
-                "Subsampling M5 for feature computation",
-                original=len(m5_data),
-                sampled=len(m5_sampled),
-                step=step,
-            )
-            m5_features = self._feature_pipeline.compute(m5_sampled)
-            # Reindex to full M5 resolution and forward-fill
-            m5_features = m5_features.reindex(m5_data.index, method="ffill")
-            m5_features = m5_features.bfill()  # fill leading NaN
-        else:
-            m5_features = self._feature_pipeline.compute(m5_data)
+        m5_features = self._feature_pipeline.compute(m5_data)
         logger.info("M5 features ready", n_bars=len(m5_features))
 
         # Feature selection: fit on H1 (primary timeframe), apply to all
@@ -584,16 +549,7 @@ class Trainer:
                     max_position_pct=risk_cfg.position_sizing.max_position_pct,
                     n_market_features=n_features,
                     lookback=self._config.data.feature_window,
-                    reward_fn=TradingReward(
-                        loss_weight=1.5,         # 2.0→1.5: less asymmetric
-                        reward_scale=200.0,       # 1000→200: reduce gradient noise
-                        churn_penalty=0.05,       # 0.3→0.05: stop punishing exits
-                        cvar_weight=0.1,          # 0.5→0.1: less tail-risk penalty
-                        spread_cost_pips=0.8,     # 1.5→0.8: realistic for majors
-                        hold_bonus=0.1,           # 0.05→0.1: reward holding winners
-                        hold_winner_bonus=0.15,   # 0.1→0.15: "let winners run"
-                        quick_cut_bonus=0.3,      # 0.2→0.3: "cut losers fast"
-                    ),
+                    reward_fn=TradingReward(loss_weight=2.0, reward_scale=1000.0),
                     max_drawdown_pct=0.15,
                 )
 
@@ -715,17 +671,8 @@ class Trainer:
         state = torch.load(cache, map_location="cpu", weights_only=True)
         extractor = model.policy.features_extractor
 
-        if extractor is None:
-            logger.warning("features_extractor is None, skipping TFT weight loading")
-            return
-
-        hive_mind = getattr(extractor, "hive_mind", None)
-        if hive_mind is None:
-            logger.warning("hive_mind not found on extractor, skipping TFT weight loading")
-            return
-
         # HiveMindExtractor.hive_mind.tft or MTFHiveMindExtractor.hive_mind.tft
-        tft_module = hive_mind.tft
+        tft_module = extractor.hive_mind.tft
         try:
             tft_module.load_state_dict(state, strict=False)
             logger.info("Applied pre-trained TFT weights to SB3 model")
@@ -880,16 +827,7 @@ class Trainer:
                     d1_lookback=mtf_cfg.lookback.d1,
                     h1_lookback=mtf_cfg.lookback.h1,
                     m5_lookback=mtf_cfg.lookback.m5,
-                    reward_fn=TradingReward(
-                        loss_weight=1.5,         # 2.0→1.5: less asymmetric
-                        reward_scale=200.0,       # 1000→200: reduce gradient noise
-                        churn_penalty=0.05,       # 0.3→0.05: stop punishing exits
-                        cvar_weight=0.1,          # 0.5→0.1: less tail-risk penalty
-                        spread_cost_pips=0.8,     # 1.5→0.8: realistic for majors
-                        hold_bonus=0.1,           # 0.05→0.1: reward holding winners
-                        hold_winner_bonus=0.15,   # 0.1→0.15: "let winners run"
-                        quick_cut_bonus=0.3,      # 0.2→0.3: "cut losers fast"
-                    ),
+                    reward_fn=TradingReward(loss_weight=2.0, reward_scale=1000.0),
                     max_drawdown_pct=0.15,
                 )
 
@@ -1251,10 +1189,7 @@ class Trainer:
             step_count = 0
 
             while not done:
-                # Use stochastic policy — deterministic=True produces near-zero
-                # mean actions that fall in the dead zone, resulting in 0 trades.
-                # The trained policy relies on entropy noise for trade generation.
-                action, _ = self._model.predict(obs, deterministic=False)
+                action, _ = self._model.predict(obs, deterministic=True)
                 obs, reward, terminated, truncated, info = eval_env.step(action)
                 done = terminated or truncated
 

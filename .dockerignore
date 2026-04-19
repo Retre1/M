@@ -1,6 +1,5 @@
 .git
 .venv
-.claude
 __pycache__
 *.pyc
 .mypy_cache

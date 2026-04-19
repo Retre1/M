@@ -36,3 +36,15 @@ htmlcov/
 *.pt
 *.pth
 *.zip
+
+# Training artifacts / VM snapshots
+vm_snapshot_*/
+apexfx_training_results/
+artifacts/
+
+# Claude Code local state
+.claude/worktrees/
+.claude/scheduled_tasks.lock
+
+# Obsidian metadata
+docs/.obsidian/

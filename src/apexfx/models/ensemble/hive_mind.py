@@ -549,9 +549,8 @@ class MTFHiveMindExtractor(BaseFeaturesExtractor):
         d_structure_features: int = 8,
         n_mtf_context: int = 6,
     ) -> None:
-        # encoded_state + 3 agents + 3 gating + 3 tf_attn + 4 position + mtf_context
-        # MTF env uses position_state shape (4,), not (8,) like single-TF env
-        features_dim = d_model + 3 + 3 + 3 + 4 + n_mtf_context
+        # encoded_state + 3 agents + 3 gating + 3 tf_attn + 8 position + mtf_context
+        features_dim = d_model + 3 + 3 + 3 + 8 + n_mtf_context
         super().__init__(observation_space, features_dim=features_dim)
 
         self.n_continuous_vars = n_continuous_vars

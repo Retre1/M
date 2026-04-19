@@ -389,13 +389,7 @@ class DiversityCallback(BaseCallback):
     def _init_optimizer(self) -> None:
         """Create a dedicated Adam optimiser for agent + gating parameters."""
         extractor = self.model.policy.features_extractor
-        if extractor is None:
-            logger.debug("features_extractor is None, deferring diversity init")
-            return
-        hm = getattr(extractor, "hive_mind", None)
-        if hm is None:
-            logger.debug("hive_mind not found, deferring diversity init")
-            return
+        hm = extractor.hive_mind
 
         diversity_params = (
             list(hm.trend_agent.parameters())
@@ -453,8 +447,6 @@ class DiversityCallback(BaseCallback):
         obs = replay_data.observations
 
         extractor = self.model.policy.features_extractor
-        if extractor is None:
-            return
 
         # Forward pass in training mode — populates _cached_* attributes
         was_training = extractor.training

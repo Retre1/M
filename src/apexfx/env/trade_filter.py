@@ -141,7 +141,7 @@ class StrategyFilter:
         break_bear = float(struct[self._IDX_STRUCTURE_BREAK_BEAR]) if len(struct) > self._IDX_STRUCTURE_BREAK_BEAR else 0.0
 
         has_position = abs(current_position) > 0.01
-        is_new_entry = not has_position and abs(proposed_action) > 0.01
+        is_new_entry = not has_position and abs(proposed_action) > 0.05
         is_adding = has_position and self._same_direction(proposed_action, current_position)
 
         # --- Rule 1: Conflicting signals → force close ---
