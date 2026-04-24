@@ -40,14 +40,21 @@ def simple_returns(prices: np.ndarray) -> np.ndarray:
 
 
 def parkinson_volatility(high: np.ndarray, low: np.ndarray, window: int) -> np.ndarray:
-    """Parkinson volatility estimator (more efficient than close-to-close)."""
+    """Parkinson volatility estimator (more efficient than close-to-close).
+
+    NaN-safe: clamps the annualised variance to >= 0 before sqrt.  With small
+    price ranges or noisy ticks, rounding can push the mean slightly negative
+    and the raw sqrt() produces NaN that silently poisons downstream features.
+    """
     log_hl = np.log(high / low)
     factor = 1.0 / (4.0 * np.log(2.0))
     parkinson_sq = factor * log_hl**2
 
     result = np.full(len(high), np.nan)
     for i in range(window, len(high)):
-        result[i] = np.sqrt(np.mean(parkinson_sq[i - window : i]) * 252)
+        val = float(np.mean(parkinson_sq[i - window : i])) * 252
+        if np.isfinite(val):
+            result[i] = np.sqrt(max(val, 0.0))
     return result
 
 
@@ -58,7 +65,15 @@ def garman_klass_volatility(
     close: np.ndarray,
     window: int,
 ) -> np.ndarray:
-    """Garman-Klass volatility estimator."""
+    """Garman-Klass volatility estimator.
+
+    NaN-safe: the GK estimator can legitimately produce negative variance
+    estimates when the overnight component ``(2*ln2 - 1) * log_co^2``
+    exceeds ``0.5 * log_hl^2`` (gapped / single-tick bars).  Clamping to
+    zero before sqrt avoids propagating NaN into the feature pipeline —
+    see logs ``train_EURUSD_20260418_113833.log`` where this warning
+    appeared mid-stage-3 and observations became mostly NaN.
+    """
     log_hl = np.log(high / low)
     log_co = np.log(close / open_)
 
@@ -66,7 +81,9 @@ def garman_klass_volatility(
 
     result = np.full(len(high), np.nan)
     for i in range(window, len(high)):
-        result[i] = np.sqrt(np.mean(gk[i - window : i]) * 252)
+        val = float(np.mean(gk[i - window : i])) * 252
+        if np.isfinite(val):
+            result[i] = np.sqrt(max(val, 0.0))
     return result
 
 

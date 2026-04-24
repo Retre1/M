@@ -7,6 +7,28 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
+# Sentinel values used when sanitising NaN / inf inputs.  Clipping at ±5 σ
+# matches the final output clip bounds so a "poisoned" feature can't bypass
+# the normaliser by arriving as +inf.
+_NAN_FILL = 0.0
+_POSINF_FILL = 5.0
+_NEGINF_FILL = -5.0
+
+
+def _sanitise(arr: np.ndarray) -> np.ndarray:
+    """Replace NaN / ±inf with finite sentinels.
+
+    NaN must never reach the running-statistics update (``transform_online``):
+    a single NaN corrupts ``stats.mean`` and ``stats.var`` permanently, so
+    every subsequent observation normalises to NaN.  See audit report
+    finding #3.
+    """
+    if np.any(~np.isfinite(arr)):
+        return np.nan_to_num(
+            arr, nan=_NAN_FILL, posinf=_POSINF_FILL, neginf=_NEGINF_FILL
+        )
+    return arr
+
 
 @dataclass
 class RunningStats:
@@ -30,6 +52,14 @@ class FeatureNormalizer:
 
     def fit_transform(self, features: pd.DataFrame) -> pd.DataFrame:
         """Compute rolling normalization on a full DataFrame (training mode)."""
+        # Sanitise NaN/inf once up-front so per-column rolling stats are not
+        # polluted — pandas.rolling propagates NaN and one bad feature would
+        # wipe a whole column for hundreds of bars.
+        if not np.all(np.isfinite(features.to_numpy(dtype=float, na_value=np.nan))):
+            features = features.copy()
+            features.replace([np.inf, -np.inf], np.nan, inplace=True)
+            features = features.fillna(0.0)
+
         if self._method == "zscore":
             return self._rolling_zscore(features)
         elif self._method == "rank":
@@ -40,6 +70,11 @@ class FeatureNormalizer:
 
     def transform_online(self, features: np.ndarray) -> np.ndarray:
         """Normalize a single observation using running statistics (live mode)."""
+        # Guard #1: never let NaN / inf hit the running statistics.  A single
+        # poisoned sample corrupts mean/var permanently and the agent sees
+        # only NaN for the rest of the episode.
+        features = _sanitise(np.asarray(features, dtype=np.float64))
+
         if self._stats is None:
             n_features = features.shape[-1]
             self._stats = RunningStats(
@@ -56,6 +91,13 @@ class FeatureNormalizer:
         delta = features - stats.mean
         stats.mean = stats.mean + alpha * delta
         stats.var = (1 - alpha) * stats.var + alpha * delta * (features - stats.mean)
+
+        # Guard #2: belt-and-suspenders — if the running stats somehow acquired
+        # a non-finite value (e.g. from a restored state), reset to a safe
+        # baseline rather than silently emitting NaN.
+        if np.any(~np.isfinite(stats.mean)) or np.any(~np.isfinite(stats.var)):
+            stats.mean = np.nan_to_num(stats.mean, nan=0.0)
+            stats.var = np.nan_to_num(stats.var, nan=1.0, posinf=1.0, neginf=1.0)
 
         # Normalize
         std = np.sqrt(np.maximum(stats.var, 1e-8))

@@ -28,7 +28,7 @@ from apexfx.env.mtf_forex_env import MTFForexTradingEnv
 from apexfx.env.reward import (
     TradingReward,
 )
-from apexfx.env.wrappers import MonitorWrapper, NormalizeReward
+from apexfx.env.wrappers import MonitorWrapper, NormalizeReward, TradeFilterWrapper
 from apexfx.features.pipeline import FeaturePipeline
 from apexfx.features.selector import FeatureSelector
 from apexfx.models.ensemble.hive_mind import HiveMindExtractor, MTFHiveMindExtractor
@@ -549,9 +549,19 @@ class Trainer:
                     max_position_pct=risk_cfg.position_sizing.max_position_pct,
                     n_market_features=n_features,
                     lookback=self._config.data.feature_window,
-                    reward_fn=TradingReward(loss_weight=2.0, reward_scale=1000.0),
+                    # reward_scale uses the Patch #3 sane default (100.0);
+                    # 1000.0 saturated every non-trivial bar → zeroed gradient.
+                    reward_fn=TradingReward(loss_weight=2.0),
                     max_drawdown_pct=0.15,
                 )
+
+                # Trade filter in TRAINING mode: rules 4/5/6 (bias / structure
+                # / direction) are bypassed because on synthetic features they
+                # blocked ~100% of entries and collapsed the policy.  Safety
+                # rules 1/2/3/7 (news blackout, event-imminent, conflicting
+                # signals force-close, pre-news scaling) stay active so the
+                # agent still learns to respect risk events.
+                env = TradeFilterWrapper(env, training_mode=True)
 
                 # Temporal commitment: prevent noisy flip-flopping
                 if tc_cfg.enabled:
@@ -827,9 +837,13 @@ class Trainer:
                     d1_lookback=mtf_cfg.lookback.d1,
                     h1_lookback=mtf_cfg.lookback.h1,
                     m5_lookback=mtf_cfg.lookback.m5,
-                    reward_fn=TradingReward(loss_weight=2.0, reward_scale=1000.0),
+                    # Patch #3: drop reward_scale=1000 (it saturated gradients).
+                    reward_fn=TradingReward(loss_weight=2.0),
                     max_drawdown_pct=0.15,
                 )
+
+                # Patch #2: trade filter in training mode (see _build_env).
+                env = TradeFilterWrapper(env, training_mode=True)
 
                 if tc_cfg.enabled:
                     env = TemporalCommitmentWrapper(

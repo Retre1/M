@@ -370,7 +370,12 @@ class RiskManager:
         else:
             self.stress_tester: StressTester | None = None
 
-        # Strategy filter (rule-based trade rules)
+        # Strategy filter (rule-based trade rules).
+        # NB: the risk manager is the LIVE enforcement path, so training_mode
+        # must stay False here regardless of what the RL training loop used.
+        # Respect an explicit config value (so operators can hard-disable the
+        # bias/structure checks for a broker that doesn't feed those signals)
+        # but default to strict behaviour.
         sf_cfg = getattr(config, "strategy_filter", None)
         if sf_cfg and sf_cfg.enabled:
             self.strategy_filter = StrategyFilter(
@@ -383,6 +388,7 @@ class RiskManager:
                 pre_news_time_threshold=sf_cfg.pre_news_time_threshold,
                 block_against_bias=sf_cfg.block_against_bias,
                 min_bias_for_direction=sf_cfg.min_bias_for_direction,
+                training_mode=getattr(sf_cfg, "training_mode", False),
             )
         else:
             self.strategy_filter: StrategyFilter | None = None

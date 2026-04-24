@@ -115,9 +115,35 @@ class TradeFilterWrapper(gym.Wrapper):
     so it learns to avoid those situations naturally during training.
     """
 
-    def __init__(self, env: gym.Env, strategy_filter: StrategyFilter | None = None) -> None:
+    def __init__(
+        self,
+        env: gym.Env,
+        strategy_filter: StrategyFilter | None = None,
+        *,
+        training_mode: bool | None = None,
+    ) -> None:
+        """
+        Args:
+            env: The environment to wrap.
+            strategy_filter: Optional pre-built filter.  If omitted a default
+                is created; in that case ``training_mode`` is honoured.
+            training_mode: If given and ``strategy_filter`` is None, the
+                auto-created filter is built with this flag.  If a filter is
+                supplied AND training_mode is not None, it overrides the
+                filter's own setting (explicit wrapper-level wins).  This
+                makes it trivial to enable relaxed rules during RL training
+                from a single call site.
+        """
         super().__init__(env)
-        self._filter = strategy_filter or StrategyFilter()
+        if strategy_filter is None:
+            self._filter = StrategyFilter(
+                training_mode=bool(training_mode) if training_mode is not None else False
+            )
+        else:
+            self._filter = strategy_filter
+            if training_mode is not None:
+                # Respect explicit override from the wrapper caller.
+                self._filter._training_mode = bool(training_mode)
         self._last_obs: dict[str, np.ndarray] | None = None
         self._filter_stats = {
             "total_actions": 0,

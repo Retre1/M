@@ -7,6 +7,11 @@ Changes from original:
 - FIX: QuantumZScoreReward now delegates to CalmarWeightedReward (better base)
 - ADD: HoldAwareReward — bonus for holding profitable positions, preventing churn
 - ADD: LogReturnReward — simple log-return with asymmetric loss penalty (cleaner gradient signal)
+- FIX: reward saturation — replace hard ``np.clip(..., -10, 10)`` with tanh
+       soft-saturation and scale reward to the ``[-1, 1]`` band.  See audit
+       report finding #1: reward_scale=1000 + hard-clip at ±10 guarantees the
+       gradient is zero on every non-trivial bar, which manifests as
+       ``sharpe≈-700000`` because the critic only ever sees −10 and +10.
 """
 
 from __future__ import annotations
@@ -14,6 +19,29 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 
 import numpy as np
+
+# Saturation helpers ----------------------------------------------------------
+# Using ``tanh`` instead of ``np.clip`` preserves gradient information near the
+# bounds: a reward of 0.95 tells the critic it's "almost max", whereas a hard
+# clip discards that information.  We scale the raw reward by ``_SAT_SCALE``
+# before ``tanh`` so typical magnitudes (|r| ~ 0.5..1.0) land in the linear
+# region and true outliers saturate smoothly.
+
+# After Patch #3 rewards should live roughly in [-2, +2] before tanh.  Scaling
+# by 0.5 then tanh keeps the emitted reward in (-1, 1) with a sensible slope.
+_SAT_SCALE: float = 0.5
+
+
+def _soft_saturate(reward: float) -> float:
+    """Soft-clip reward into ``(-1, 1)`` via ``tanh(reward * _SAT_SCALE)``.
+
+    Preserves gradient everywhere, unlike ``np.clip`` which zeroes it outside
+    the bounds.  A finite but extreme reward still maps close to ±1 but with
+    non-zero derivative — the critic still learns from the magnitude.
+    """
+    if not np.isfinite(reward):
+        return 0.0
+    return float(np.tanh(reward * _SAT_SCALE))
 
 
 class BaseRewardFunction(ABC):
@@ -78,7 +106,7 @@ class DifferentialSharpeReward(BaseRewardFunction):
         drawdown = (self._peak - portfolio_value) / self._peak if self._peak > 0 else 0.0
 
         reward = dsr - self.lambda_dd * drawdown
-        return float(np.clip(reward, -10.0, 10.0))
+        return _soft_saturate(reward)
 
 
 class SortinoReward(BaseRewardFunction):
@@ -123,7 +151,7 @@ class SortinoReward(BaseRewardFunction):
         drawdown = (self._peak - portfolio_value) / self._peak if self._peak > 0 else 0.0
 
         reward = sortino - self.lambda_dd * drawdown
-        return float(np.clip(reward, -10.0, 10.0))
+        return _soft_saturate(reward)
 
 
 class CalmarWeightedReward(BaseRewardFunction):
@@ -205,7 +233,7 @@ class CalmarWeightedReward(BaseRewardFunction):
         self._prev_drawdown = drawdown
 
         reward = dsr - dd_penalty - duration_penalty + recovery_bonus
-        return float(np.clip(reward, -10.0, 10.0))
+        return _soft_saturate(reward)
 
 
 class QuantumZScoreReward(BaseRewardFunction):
@@ -249,7 +277,9 @@ class QuantumZScoreReward(BaseRewardFunction):
         if abs(z) > 2.0 and np.sign(portfolio_return) != np.sign(z):
             quantum_bonus = abs(z) * self.z_score_bonus_weight
 
-        return float(np.clip(base + quantum_bonus, -10.0, 10.0))
+        # ``base`` is already saturated to (-1, 1); quantum_bonus is small so a
+        # second soft-saturation keeps the total bounded without hiding signal.
+        return _soft_saturate(base + quantum_bonus)
 
 
 class HoldAwareReward(BaseRewardFunction):
@@ -346,7 +376,7 @@ class HoldAwareReward(BaseRewardFunction):
             quantum_bonus = abs(z) * self.z_score_bonus_weight
 
         reward = base + hold_bonus - churn_penalty + quantum_bonus
-        return float(np.clip(reward, -10.0, 10.0))
+        return _soft_saturate(reward)
 
 
 class LogReturnReward(BaseRewardFunction):
@@ -372,8 +402,18 @@ class LogReturnReward(BaseRewardFunction):
     def __init__(
         self,
         loss_weight: float = 2.0,
-        reward_scale: float = 1000.0,
+        reward_scale: float = 100.0,
     ) -> None:
+        """
+        Args:
+            loss_weight: Multiplier applied to negative log-returns (losses hurt more).
+            reward_scale: Scales log-return before soft-saturation.  Default
+                reduced from 1000 → 100 (see audit report): a typical H4
+                EURUSD bar has ``|log_ret| ≤ 5e-3`` so the unscaled reward was
+                living on the hard-clip boundary ±10 every bar, zeroing the
+                policy gradient.  100 × 5e-3 = 0.5 lands comfortably in the
+                linear region of ``tanh``.
+        """
         self.loss_weight = loss_weight
         self.reward_scale = reward_scale
 
@@ -382,7 +422,9 @@ class LogReturnReward(BaseRewardFunction):
 
     def compute(self, portfolio_value: float, prev_portfolio_value: float) -> float:
         if prev_portfolio_value <= 0 or portfolio_value <= 0:
-            return -10.0
+            # Catastrophic blow-up: emit a strong negative signal but keep it
+            # soft-saturated so gradients survive.
+            return _soft_saturate(-5.0)
 
         log_ret = np.log(portfolio_value / prev_portfolio_value)
 
@@ -391,7 +433,7 @@ class LogReturnReward(BaseRewardFunction):
             log_ret *= self.loss_weight
 
         reward = log_ret * self.reward_scale
-        return float(np.clip(reward, -10.0, 10.0))
+        return _soft_saturate(reward)
 
 
 class TradingReward(BaseRewardFunction):
@@ -415,7 +457,7 @@ class TradingReward(BaseRewardFunction):
     def __init__(
         self,
         loss_weight: float = 2.0,
-        reward_scale: float = 1000.0,
+        reward_scale: float = 100.0,
         spread_cost_pips: float = 1.5,
         pip_value: float = 0.0001,
         churn_penalty: float = 0.3,
@@ -433,6 +475,12 @@ class TradingReward(BaseRewardFunction):
         news_trade_penalty: float = 0.3,
         structure_confirm_bonus: float = 0.15,
     ) -> None:
+        # NOTE: reward_scale default reduced 1000 → 100.  See audit report:
+        # with scale=1000 and np.clip(-10, 10) the reward saturated at ±10
+        # on nearly every bar (|log_ret|≈5e-3 × 1000 = 5, plus DD/CVaR/costs
+        # easily pushes it past 10).  The critic saw a near-binary signal and
+        # the policy gradient was ~zero, which matches the "Sharpe −700 000"
+        # pathology in ``train_EURUSD_*.log``.
         self.loss_weight = loss_weight
         self.reward_scale = reward_scale
         self.spread_cost = spread_cost_pips * pip_value
@@ -511,7 +559,8 @@ class TradingReward(BaseRewardFunction):
 
     def compute(self, portfolio_value: float, prev_portfolio_value: float) -> float:
         if prev_portfolio_value <= 0 or portfolio_value <= 0:
-            return -10.0
+            # Blow-up: strong negative signal but gradient preserved.
+            return _soft_saturate(-5.0)
 
         # 1. Base: asymmetric log-return
         log_ret = np.log(portfolio_value / prev_portfolio_value)
@@ -610,4 +659,59 @@ class TradingReward(BaseRewardFunction):
             - news_penalty
             + struct_bonus
         )
-        return float(np.clip(reward, -10.0, 10.0))
+        return _soft_saturate(reward)
+
+
+class OnlineSharpeTracker:
+    """Rolling, honest financial Sharpe computed from realised portfolio returns.
+
+    Crucial distinction vs. the training reward: the *reward* is a shaped,
+    clipped-and-saturated proxy designed for stable RL gradients; the metric
+    used to decide "is this agent actually any good / should we stop?" must
+    be an honest Sharpe on the raw portfolio return series.
+
+    Intended use in the trainer / callback::
+
+        sharpe = OnlineSharpeTracker(periods_per_year=6*252)  # H4 bars
+        on each env step:
+            sharpe.update(portfolio_value)
+        every N steps:
+            if sharpe.value() < early_stop_threshold: halt()
+
+    Attributes:
+        periods_per_year: Annualisation factor — 252 for daily, 6*252 for H4, etc.
+        window: Rolling window length (in bars).  ``None`` → all-time.
+    """
+
+    def __init__(self, periods_per_year: int = 252, window: int | None = None) -> None:
+        self.periods_per_year = periods_per_year
+        self.window = window
+        self._prev_value: float | None = None
+        self._returns: list[float] = []
+
+    def reset(self) -> None:
+        self._prev_value = None
+        self._returns = []
+
+    def update(self, portfolio_value: float) -> None:
+        """Feed the current portfolio value; internally computes log-return."""
+        if self._prev_value is not None and self._prev_value > 0 and portfolio_value > 0:
+            r = float(np.log(portfolio_value / self._prev_value))
+            if np.isfinite(r):
+                self._returns.append(r)
+                if self.window is not None and len(self._returns) > self.window:
+                    self._returns = self._returns[-self.window:]
+        self._prev_value = portfolio_value
+
+    def value(self) -> float:
+        """Annualised Sharpe over the tracked returns — 0.0 if not enough data."""
+        if len(self._returns) < 2:
+            return 0.0
+        arr = np.asarray(self._returns, dtype=np.float64)
+        std = float(np.std(arr, ddof=1))
+        if std < 1e-12:
+            return 0.0
+        return float(np.mean(arr) / std * np.sqrt(self.periods_per_year))
+
+    def n_samples(self) -> int:
+        return len(self._returns)

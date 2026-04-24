@@ -526,6 +526,10 @@ class StrategyFilterConfig(BaseModel):
     pre_news_time_threshold: float = 0.1
     block_against_bias: bool = True
     min_bias_for_direction: float = 0.5
+    # When True, rules 4/5/6 (bias / structure / direction) are bypassed.
+    # Intended ONLY for RL training where fundamental & structure features
+    # are synthetic — flip back to False for live / evaluation runs.
+    training_mode: bool = False
 
 
 class PortfolioVaRConfig(BaseModel):

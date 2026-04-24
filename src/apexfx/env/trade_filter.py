@@ -73,6 +73,7 @@ class StrategyFilter:
         block_against_bias: bool = True,
         min_bias_for_direction: float = 0.5,
         enabled: bool = True,
+        training_mode: bool = False,
     ) -> None:
         """Initialize strategy filter.
 
@@ -87,6 +88,17 @@ class StrategyFilter:
             block_against_bias: Block entries against fundamental direction.
             min_bias_for_direction: Minimum |bias| to enforce direction alignment.
             enabled: Whether the filter is active.
+            training_mode: If True, bypass rules 4 (min bias), 5 (structure
+                confirm) and 6 (direction alignment).  These rules depend on
+                real fundamental / market-structure features which are zero or
+                random on synthetic data — enforcing them hard would block
+                100 % of entries during RL training and collapse gradients
+                (observed in ``train_EURUSD_*`` logs where Stage 3
+                ``profit_factor=0.0`` for thousands of steps).  Rules 1 (news
+                blackout), 2 (event imminent), 3 (conflicting-signals
+                force-close) and 7 (pre-news scaling) remain active so the
+                agent still learns to respect risk-management constraints.
+                At inference / live trading set ``training_mode=False``.
         """
         self._news_blackout_threshold = news_blackout_threshold
         self._time_to_event_threshold = time_to_event_threshold
@@ -98,6 +110,7 @@ class StrategyFilter:
         self._block_against_bias = block_against_bias
         self._min_bias_for_direction = min_bias_for_direction
         self._enabled = enabled
+        self._training_mode = training_mode
 
     def check(
         self,
@@ -171,57 +184,62 @@ class StrategyFilter:
                 force_close=False,
             )
 
-        # --- Rule 4: Minimum fundamental bias for entry ---
-        if is_new_entry and abs(fundamental_bias) < self._min_fundamental_bias:
-            return FilterDecision(
-                allowed=False,
-                scale=0.0,
-                reason="insufficient_bias",
-                force_close=False,
-            )
-
-        # --- Rule 5: Structure confirmation for entry ---
-        if self._require_structure_confirm and is_new_entry:
-            has_structure = break_bull > 0.5 or break_bear > 0.5
-            if not has_structure:
+        # Rules 4, 5, 6 below depend on real fundamental / structure features.
+        # On synthetic training data these are zeros / noise, so enforcing them
+        # would block every entry and collapse the policy.  In training_mode
+        # we skip them and rely on reward shaping to teach direction / timing.
+        if not self._training_mode:
+            # --- Rule 4: Minimum fundamental bias for entry ---
+            if is_new_entry and abs(fundamental_bias) < self._min_fundamental_bias:
                 return FilterDecision(
                     allowed=False,
                     scale=0.0,
-                    reason="no_structure_confirm",
+                    reason="insufficient_bias",
                     force_close=False,
                 )
 
-            # Check alignment: bullish break → long, bearish break → short
-            if break_bull > 0.5 and proposed_action < -0.05:
-                return FilterDecision(
-                    allowed=False,
-                    scale=0.0,
-                    reason="structure_direction_mismatch",
-                    force_close=False,
-                )
-            if break_bear > 0.5 and proposed_action > 0.05:
-                return FilterDecision(
-                    allowed=False,
-                    scale=0.0,
-                    reason="structure_direction_mismatch",
-                    force_close=False,
-                )
+            # --- Rule 5: Structure confirmation for entry ---
+            if self._require_structure_confirm and is_new_entry:
+                has_structure = break_bull > 0.5 or break_bear > 0.5
+                if not has_structure:
+                    return FilterDecision(
+                        allowed=False,
+                        scale=0.0,
+                        reason="no_structure_confirm",
+                        force_close=False,
+                    )
 
-        # --- Rule 6: Direction alignment with fundamental bias ---
-        if (
-            self._block_against_bias
-            and is_new_entry
-            and abs(fundamental_bias) >= self._min_bias_for_direction
-        ):
-            bias_direction = 1 if fundamental_bias > 0 else -1
-            action_direction = 1 if proposed_action > 0 else -1
-            if bias_direction != action_direction:
-                return FilterDecision(
-                    allowed=False,
-                    scale=0.0,
-                    reason="against_fundamental_bias",
-                    force_close=False,
-                )
+                # Check alignment: bullish break → long, bearish break → short
+                if break_bull > 0.5 and proposed_action < -0.05:
+                    return FilterDecision(
+                        allowed=False,
+                        scale=0.0,
+                        reason="structure_direction_mismatch",
+                        force_close=False,
+                    )
+                if break_bear > 0.5 and proposed_action > 0.05:
+                    return FilterDecision(
+                        allowed=False,
+                        scale=0.0,
+                        reason="structure_direction_mismatch",
+                        force_close=False,
+                    )
+
+            # --- Rule 6: Direction alignment with fundamental bias ---
+            if (
+                self._block_against_bias
+                and is_new_entry
+                and abs(fundamental_bias) >= self._min_bias_for_direction
+            ):
+                bias_direction = 1 if fundamental_bias > 0 else -1
+                action_direction = 1 if proposed_action > 0 else -1
+                if bias_direction != action_direction:
+                    return FilterDecision(
+                        allowed=False,
+                        scale=0.0,
+                        reason="against_fundamental_bias",
+                        force_close=False,
+                    )
 
         # --- Rule 7: Pre-news position scaling ---
         if time_to_event < self._pre_news_time_threshold and has_position:
