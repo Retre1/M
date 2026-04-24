@@ -106,24 +106,60 @@ class TestTrainingMode:
 
     # --- Safety rules must stay active even in training_mode ---
 
-    def test_training_mode_still_blocks_news(self) -> None:
-        """Rule 2: news blackout remains enforced."""
+    def test_training_mode_bypasses_news_blackout(self) -> None:
+        """Rule 2 (news blackout) must NOT block in training_mode.
+
+        On synthetic / no-calendar data ``news_active`` is zero by default,
+        so this rule never fires in practice — but a malformed obs could
+        still poke it.  Training-mode skips the rule entirely so the agent
+        is not surprised by spurious blocks.
+        """
         f = StrategyFilter(training_mode=True)
         obs = _obs(news=1.0)
         decision = f.check(obs, proposed_action=0.5, current_position=0.0)
-        assert decision.allowed is False
-        assert decision.reason == "news_blackout"
+        assert decision.allowed is True
 
-    def test_training_mode_still_blocks_event_imminent(self) -> None:
-        """Rule 3: imminent event remains enforced."""
+    def test_training_mode_bypasses_event_imminent(self) -> None:
+        """Rule 3 (event imminent) must NOT block in training_mode.
+
+        Audit follow-up: with no calendar feed ``time_to_event`` defaults
+        to 0.0, which Rule 3 reads as "event happening right now" and
+        blocked 2000/2000 entries on the EURUSD H1 smoke.  Training-mode
+        bypass restores the agent's ability to enter trades.
+        """
         f = StrategyFilter(training_mode=True)
         obs = _obs(time_to_event=0.001)  # below threshold
         decision = f.check(obs, proposed_action=0.5, current_position=0.0)
-        assert decision.allowed is False
-        assert decision.reason == "event_imminent"
+        assert decision.allowed is True
+
+    def test_training_mode_zero_calendar_does_not_block(self) -> None:
+        """Default-zero fundamentals (no calendar wired) must allow entries."""
+        f = StrategyFilter(training_mode=True)
+        # Mimic the exact production state observed during the smoke run:
+        # all fundamental_features are zero (no economic-calendar feed).
+        obs = _obs(news=0.0, time_to_event=0.0, bias=0.0, conflicting=0.0)
+        decision = f.check(obs, proposed_action=0.8, current_position=0.0)
+        assert decision.allowed is True, f"unexpectedly blocked: {decision.reason}"
+
+    def test_training_mode_bypasses_pre_news_scaling(self) -> None:
+        """Rule 7 (pre-news scaling) must NOT scale in training_mode.
+
+        time_to_event=0.0 default would otherwise shrink every position
+        to ``reduce_scale_pre_news`` and starve the agent of PnL signal.
+        """
+        f = StrategyFilter(training_mode=True)
+        obs = _obs(time_to_event=0.0)
+        decision = f.check(obs, proposed_action=0.5, current_position=0.5)
+        assert decision.allowed is True
+        assert decision.scale == 1.0
 
     def test_training_mode_still_force_closes_on_conflict(self) -> None:
-        """Rule 1: conflicting signals still force-close an open position."""
+        """Rule 1: conflicting signals still force-close an open position.
+
+        Rule 1 only fires when ``has_position`` AND ``conflicting >= 0.5``;
+        on default-zero data it never fires, so it is safe (and useful)
+        to keep active even in training_mode.
+        """
         f = StrategyFilter(training_mode=True)
         obs = _obs(conflicting=1.0)
         decision = f.check(obs, proposed_action=0.0, current_position=0.5)

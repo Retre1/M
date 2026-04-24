@@ -88,17 +88,20 @@ class StrategyFilter:
             block_against_bias: Block entries against fundamental direction.
             min_bias_for_direction: Minimum |bias| to enforce direction alignment.
             enabled: Whether the filter is active.
-            training_mode: If True, bypass rules 4 (min bias), 5 (structure
-                confirm) and 6 (direction alignment).  These rules depend on
-                real fundamental / market-structure features which are zero or
-                random on synthetic data — enforcing them hard would block
-                100 % of entries during RL training and collapse gradients
-                (observed in ``train_EURUSD_*`` logs where Stage 3
-                ``profit_factor=0.0`` for thousands of steps).  Rules 1 (news
-                blackout), 2 (event imminent), 3 (conflicting-signals
-                force-close) and 7 (pre-news scaling) remain active so the
-                agent still learns to respect risk-management constraints.
-                At inference / live trading set ``training_mode=False``.
+            training_mode: If True, bypass rules 2 (news blackout),
+                3 (event imminent), 4 (min bias), 5 (structure confirm),
+                6 (direction alignment), and 7 (pre-news scaling).
+                Every one of these rules reads ``fundamental_features`` or
+                ``structure_features`` which default to zero when no
+                economic-calendar feed is wired (training / synthetic).
+                In particular ``time_to_event=0.0`` is indistinguishable
+                from "event happening right now" → Rule 3 blocked
+                2000/2000 entries on the first audit follow-up smoke run.
+                Only Rule 1 (force-close on conflicting signals when
+                already in a position) stays active because it has no
+                blocking side-effect on a flat agent.  At inference / live
+                trading set ``training_mode=False`` so all rules fire
+                against the real calendar feed.
         """
         self._news_blackout_threshold = news_blackout_threshold
         self._time_to_event_threshold = time_to_event_threshold
@@ -166,23 +169,30 @@ class StrategyFilter:
                 force_close=True,
             )
 
-        # --- Rule 2: News blackout → block new entries ---
-        if news_active >= self._news_blackout_threshold and (is_new_entry or is_adding):
-            return FilterDecision(
-                allowed=False,
-                scale=0.0,
-                reason="news_blackout",
-                force_close=False,
-            )
+        # Rules 2 / 3 read fundamental_features which default to zero when no
+        # economic-calendar feed is wired.  In training_mode we therefore
+        # bypass them — `time_to_event=0.0` is otherwise indistinguishable
+        # from "event happening right now" and blocks 100 % of entries on
+        # synthetic / no-calendar data (audit follow-up: smoke run on
+        # EURUSD H1 hit reason="event_imminent" for 2000/2000 steps).
+        if not self._training_mode:
+            # --- Rule 2: News blackout → block new entries ---
+            if news_active >= self._news_blackout_threshold and (is_new_entry or is_adding):
+                return FilterDecision(
+                    allowed=False,
+                    scale=0.0,
+                    reason="news_blackout",
+                    force_close=False,
+                )
 
-        # --- Rule 3: Time to event too close → block new entries ---
-        if time_to_event < self._time_to_event_threshold and (is_new_entry or is_adding):
-            return FilterDecision(
-                allowed=False,
-                scale=0.0,
-                reason="event_imminent",
-                force_close=False,
-            )
+            # --- Rule 3: Time to event too close → block new entries ---
+            if time_to_event < self._time_to_event_threshold and (is_new_entry or is_adding):
+                return FilterDecision(
+                    allowed=False,
+                    scale=0.0,
+                    reason="event_imminent",
+                    force_close=False,
+                )
 
         # Rules 4, 5, 6 below depend on real fundamental / structure features.
         # On synthetic training data these are zeros / noise, so enforcing them
@@ -242,7 +252,10 @@ class StrategyFilter:
                     )
 
         # --- Rule 7: Pre-news position scaling ---
-        if time_to_event < self._pre_news_time_threshold and has_position:
+        # Same training_mode bypass rationale as rules 2/3: time_to_event=0.0
+        # under no-calendar conditions would scale every position to a tiny
+        # fraction and starve the agent of meaningful PnL signal.
+        if not self._training_mode and time_to_event < self._pre_news_time_threshold and has_position:
             return FilterDecision(
                 allowed=True,
                 scale=self._reduce_scale_pre_news,
