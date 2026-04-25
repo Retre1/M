@@ -158,6 +158,13 @@ class DataConfig(BaseModel):
 # --- Model ---
 
 
+class TFTPretrainConfig(BaseModel):
+    enabled: bool = True
+    epochs: int = 30
+    batch_size: int = 128
+    patience: int = 5
+
+
 class TFTConfig(BaseModel):
     d_model: int = 64
     n_heads: int = 4
@@ -169,6 +176,7 @@ class TFTConfig(BaseModel):
     known_future_inputs: list[str] = Field(
         default_factory=lambda: ["hour_sin", "hour_cos", "dow_sin", "dow_cos", "session_id"]
     )
+    pretrain: TFTPretrainConfig = Field(default_factory=TFTPretrainConfig)
 
 
 class AgentConfig(BaseModel):

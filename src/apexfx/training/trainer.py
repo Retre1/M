@@ -615,6 +615,12 @@ class Trainer:
         if self._tft_pretrained:
             return
 
+        pretrain_cfg = self._config.model.tft.pretrain
+        if not pretrain_cfg.enabled:
+            logger.info("TFT pre-training disabled by config — skipping")
+            self._tft_pretrained = True
+            return
+
         pretrain_path = (
             Path(self._config.base.paths.models_dir) / "pretrained" / "tft_pretrained.pt"
         )
@@ -648,9 +654,9 @@ class Trainer:
             tft=tft,
             device=self._device,
             lr=1e-3,
-            epochs=30,
-            batch_size=128,
-            patience=5,
+            epochs=pretrain_cfg.epochs,
+            batch_size=pretrain_cfg.batch_size,
+            patience=pretrain_cfg.patience,
         )
 
         results = pretrainer.train(
