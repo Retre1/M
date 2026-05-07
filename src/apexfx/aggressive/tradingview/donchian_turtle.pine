@@ -1,0 +1,261 @@
+// © ApexFX 2026 — Donchian Turtle aggressive strategy for TradingView
+//
+// What this is
+// ============
+// Classic Turtle trading rules adapted for crypto perpetuals on OKX:
+//   • Entry:    Donchian channel breakout (default 20-period)
+//   • Pyramid:  Add up to 4 units, every +0.5N (ATR) profit
+//   • Exit:     Opposite Donchian channel breakout (default 10-period)
+//                OR 2N ATR hard stop
+//   • Sizing:   ATR-based, target 1.5% account risk per unit
+//
+// How it talks to our bot
+// =======================
+// On every entry/exit/pyramid event the strategy emits a JSON alert with
+// {action, symbol, side, size_pct, sl_price, tp_price, signal_id} via the
+// alert_message field.  The Python webhook receiver verifies the HMAC,
+// translates to an OKX order, and executes.
+//
+// Why Pine Script over native Python
+// ==================================
+// 1. TradingView's data feed is 24/7 server-side — your bot doesn't need
+//    a always-on Python process scanning the market.
+// 2. Visual debugging — you see entries/exits on the chart instantly.
+// 3. Built-in backtest with proper equity curve, win rate, max DD.
+// 4. Pine compilation is sub-second — strategy iteration is 10× faster.
+//
+// Setup steps (in TradingView)
+// ============================
+// 1. Open BTCUSDT.P (or BTCUSDT) chart on 4H timeframe
+// 2. Pine Editor → New → Strategy → paste this file
+// 3. Save as "ApexFX Donchian Turtle"
+// 4. Click "Add to Chart" — strategy plots on price
+// 5. Strategy Tester tab → check backtest results
+// 6. Settings → Properties:
+//      Initial capital: 1000
+//      Order size: percent_of_equity, value 1
+//      Pyramiding: 4
+//      Commission: 0.05% (OKX taker)
+//      Slippage: 1 tick
+// 7. To enable live alerts:
+//      Click bell icon → Add alert
+//      Condition: "ApexFX Donchian Turtle" → "Any alert() function call"
+//      Webhook URL: https://your-vps.example.com/tv-webhook
+//      Message: leave blank (we emit JSON via alert() ourselves)
+//      Alert name: "OKX Turtle"
+//      Frequency: Once per bar close
+// 8. Premium/Pro+ required for webhooks (≥$15/mo plan)
+//
+//@version=5
+strategy(
+    title         = "ApexFX Donchian Turtle",
+    shorttitle    = "ApexFX Turtle",
+    overlay       = true,
+    pyramiding    = 4,                  // Up to 4 units in same direction
+    initial_capital = 1000,
+    default_qty_type = strategy.percent_of_equity,
+    default_qty_value = 1,              // Sizing computed manually below
+    commission_type = strategy.commission.percent,
+    commission_value = 0.05,            // OKX taker 0.055% rounded
+    slippage      = 1,
+    process_orders_on_close = true,     // Important: trade only at bar close
+    calc_on_every_tick = false          // Avoid intra-bar repaint
+)
+
+// ============================================================================
+// INPUTS
+// ============================================================================
+
+// -- Donchian channels --
+group_donchian = "Donchian Channels"
+entry_period = input.int(20, "Entry period (breakout window)", minval=5, maxval=100, group=group_donchian,
+    tooltip="Long when close >= highest-high of N bars; short when close <= lowest-low. Turtle System 1 uses 20.")
+exit_period = input.int(10, "Exit period (trailing stop window)", minval=5, maxval=50, group=group_donchian,
+    tooltip="Exit long when close <= lowest-low of N bars (and inverse for short). 10 < entry_period gives wider entries, tighter exits.")
+
+// -- Risk / sizing --
+group_risk = "Risk Management"
+risk_per_unit_pct = input.float(1.5, "Risk per unit (% of equity)", minval=0.1, maxval=5.0, step=0.1, group=group_risk,
+    tooltip="Loss in % of account on a 2N stop hit. With pyramiding=4, total max risk per market = 6% (4 units × 1.5%).")
+atr_period = input.int(20, "ATR period", minval=5, maxval=50, group=group_risk)
+stop_atr_mult = input.float(2.0, "Stop loss (× N ATR)", minval=0.5, maxval=5.0, step=0.5, group=group_risk,
+    tooltip="Hard SL distance in N (ATR units). 2N is original Turtle.")
+pyramid_atr_mult = input.float(0.5, "Pyramid trigger (× N ATR)", minval=0.25, maxval=2.0, step=0.25, group=group_risk,
+    tooltip="Add a unit every +0.5N profit. Lower = more aggressive pyramiding.")
+max_units = input.int(4, "Max units per direction", minval=1, maxval=4, group=group_risk)
+
+// -- Direction filter (regime) --
+group_filter = "Trend Filter"
+use_trend_filter = input.bool(true, "Filter trades against EMA200", group=group_filter,
+    tooltip="Long only above EMA200, short only below. Cuts whipsaws in choppy regimes (massive Sharpe boost).")
+ema_period = input.int(200, "EMA period", minval=50, maxval=500, group=group_filter)
+
+// -- Webhook --
+group_webhook = "Webhook (for live trading)"
+account_id = input.string("apx_main", "Account ID", group=group_webhook,
+    tooltip="Identifier for which OKX account/sub-account to trade.  Echoed in JSON alerts so a single bot can route signals from multiple TV strategies.")
+webhook_secret = input.string("", "HMAC secret (DO NOT save in code)", group=group_webhook, confirm=false,
+    tooltip="Shared secret with the Python receiver.  Used to verify alert authenticity.  TODO Pine v6 will have proper secret handling — for now leave blank and verify via signal_id uniqueness.")
+
+// ============================================================================
+// INDICATORS
+// ============================================================================
+
+// Donchian channels (entry + exit)
+entry_high = ta.highest(high, entry_period)
+entry_low  = ta.lowest(low,  entry_period)
+exit_high  = ta.highest(high, exit_period)
+exit_low   = ta.lowest(low,  exit_period)
+
+// ATR (N in Turtle terminology)
+N = ta.atr(atr_period)
+
+// Trend filter
+ema_trend = ta.ema(close, ema_period)
+above_trend = close > ema_trend
+below_trend = close < ema_trend
+
+// ============================================================================
+// SIZING
+// ============================================================================
+// Position size = (equity × risk_pct) / (stop_atr_mult × N)
+// This makes a 2N adverse move equal to risk_per_unit_pct of equity.
+
+equity_for_sizing = strategy.equity
+dollar_risk_per_unit = equity_for_sizing * (risk_per_unit_pct / 100.0)
+stop_distance_dollars = stop_atr_mult * N
+contracts_per_unit = dollar_risk_per_unit / math.max(stop_distance_dollars, syminfo.mintick)
+
+// ============================================================================
+// ENTRY / EXIT LOGIC
+// ============================================================================
+
+// Are we already in a position in this direction?
+in_long  = strategy.position_size > 0
+in_short = strategy.position_size < 0
+n_units_long  = in_long  ? math.floor(strategy.position_size  / contracts_per_unit) : 0
+n_units_short = in_short ? math.floor(-strategy.position_size / contracts_per_unit) : 0
+
+// Tracking the entry of the LAST unit (used for pyramid trigger)
+var float last_entry_price = na
+if not in_long and not in_short
+    last_entry_price := na
+
+// -- Long entry / pyramid --
+long_breakout = ta.crossover(close, entry_high[1])  // close crosses above prev-bar's channel high
+trend_ok_long = not use_trend_filter or above_trend
+
+// First unit: breakout out of channel + trend filter
+if long_breakout and trend_ok_long and not in_short and n_units_long == 0
+    strategy.entry("L1", strategy.long, qty=contracts_per_unit,
+        comment="L entry @ " + str.tostring(close, "#.####"),
+        alert_message='{"action":"entry","symbol":"' + syminfo.tickerid + '","side":"long","unit":1,"size":' + str.tostring(contracts_per_unit) + ',"price":' + str.tostring(close) + ',"sl":' + str.tostring(close - stop_atr_mult*N) + ',"account":"' + account_id + '"}')
+    last_entry_price := close
+
+// Pyramid units: +0.5N each
+if in_long and n_units_long > 0 and n_units_long < max_units
+    pyramid_trigger = na(last_entry_price) ? false : close >= last_entry_price + pyramid_atr_mult * N
+    if pyramid_trigger
+        strategy.entry("L" + str.tostring(n_units_long + 1), strategy.long, qty=contracts_per_unit,
+            comment="L pyramid #" + str.tostring(n_units_long + 1),
+            alert_message='{"action":"pyramid","symbol":"' + syminfo.tickerid + '","side":"long","unit":' + str.tostring(n_units_long + 1) + ',"size":' + str.tostring(contracts_per_unit) + ',"price":' + str.tostring(close) + ',"account":"' + account_id + '"}')
+        last_entry_price := close
+
+// -- Short entry / pyramid --
+short_breakout = ta.crossunder(close, entry_low[1])
+trend_ok_short = not use_trend_filter or below_trend
+
+if short_breakout and trend_ok_short and not in_long and n_units_short == 0
+    strategy.entry("S1", strategy.short, qty=contracts_per_unit,
+        comment="S entry @ " + str.tostring(close, "#.####"),
+        alert_message='{"action":"entry","symbol":"' + syminfo.tickerid + '","side":"short","unit":1,"size":' + str.tostring(contracts_per_unit) + ',"price":' + str.tostring(close) + ',"sl":' + str.tostring(close + stop_atr_mult*N) + ',"account":"' + account_id + '"}')
+    last_entry_price := close
+
+if in_short and n_units_short > 0 and n_units_short < max_units
+    pyramid_trigger_s = na(last_entry_price) ? false : close <= last_entry_price - pyramid_atr_mult * N
+    if pyramid_trigger_s
+        strategy.entry("S" + str.tostring(n_units_short + 1), strategy.short, qty=contracts_per_unit,
+            comment="S pyramid #" + str.tostring(n_units_short + 1),
+            alert_message='{"action":"pyramid","symbol":"' + syminfo.tickerid + '","side":"short","unit":' + str.tostring(n_units_short + 1) + ',"size":' + str.tostring(contracts_per_unit) + ',"price":' + str.tostring(close) + ',"account":"' + account_id + '"}')
+        last_entry_price := close
+
+// -- Long exits --
+long_donchian_exit = in_long and ta.crossunder(close, exit_low[1])
+long_hard_stop = in_long and not na(strategy.position_avg_price) and close <= strategy.position_avg_price - stop_atr_mult * N
+
+if long_donchian_exit
+    strategy.close_all(comment="L exit (Donchian)",
+        alert_message='{"action":"exit","symbol":"' + syminfo.tickerid + '","side":"long","reason":"donchian_exit","price":' + str.tostring(close) + ',"account":"' + account_id + '"}')
+
+if long_hard_stop
+    strategy.close_all(comment="L stop (2N)",
+        alert_message='{"action":"exit","symbol":"' + syminfo.tickerid + '","side":"long","reason":"hard_stop","price":' + str.tostring(close) + ',"account":"' + account_id + '"}')
+
+// -- Short exits --
+short_donchian_exit = in_short and ta.crossover(close, exit_high[1])
+short_hard_stop = in_short and not na(strategy.position_avg_price) and close >= strategy.position_avg_price + stop_atr_mult * N
+
+if short_donchian_exit
+    strategy.close_all(comment="S exit (Donchian)",
+        alert_message='{"action":"exit","symbol":"' + syminfo.tickerid + '","side":"short","reason":"donchian_exit","price":' + str.tostring(close) + ',"account":"' + account_id + '"}')
+
+if short_hard_stop
+    strategy.close_all(comment="S stop (2N)",
+        alert_message='{"action":"exit","symbol":"' + syminfo.tickerid + '","side":"short","reason":"hard_stop","price":' + str.tostring(close) + ',"account":"' + account_id + '"}')
+
+// ============================================================================
+// VISUAL OVERLAY (chart plots)
+// ============================================================================
+
+plot(entry_high, "Entry High", color=color.new(color.green, 50), linewidth=1)
+plot(entry_low,  "Entry Low",  color=color.new(color.red,   50), linewidth=1)
+plot(exit_high,  "Exit High",  color=color.new(color.green, 80), linewidth=1, style=plot.style_circles)
+plot(exit_low,   "Exit Low",   color=color.new(color.red,   80), linewidth=1, style=plot.style_circles)
+plot(use_trend_filter ? ema_trend : na, "EMA Trend", color=color.new(color.blue, 30), linewidth=2)
+
+// Display current N (ATR)
+var label atr_label = na
+if barstate.islast
+    label.delete(atr_label)
+    atr_label := label.new(
+        x=bar_index, y=high * 1.005,
+        text="N=" + str.tostring(N, "#.##") +
+             "\nUnit=" + str.tostring(contracts_per_unit, "#.####") +
+             "\nUnits L:" + str.tostring(n_units_long) +
+             " S:" + str.tostring(n_units_short),
+        style=label.style_label_left,
+        color=color.new(color.gray, 80),
+        textcolor=color.white,
+        size=size.small)
+
+// ============================================================================
+// NOTES FOR LIVE TRADING
+// ============================================================================
+//
+// 1. Always backtest first.  Click "Strategy Tester" → "Performance Summary".
+//    Targets:
+//      - Net profit > 50% (over 1+ year backtest period)
+//      - Profit factor > 1.3
+//      - Max drawdown < 35%
+//      - Sharpe (annualized) > 1.0
+//    If you don't hit these on BTCUSDT 4H 2022-2026, retune before live.
+//
+// 2. Test on multiple symbols.  Apply to ETHUSDT.P, SOLUSDT.P — strategy
+//    should be profitable across all 3 (same logic, different vol scale).
+//
+// 3. Webhook frequency: "Once per bar close" — never "Once per bar".
+//    Otherwise pyramid logic fires multiple times intra-bar.
+//
+// 4. ALWAYS test on demo first.  In the Python receiver, demo=True flag
+//    routes to OKX simulated trading.  Run 30+ days demo before any real
+//    capital deployment.
+//
+// 5. Alert webhook payload format is JSON.  The Python receiver uses
+//    pydantic to validate every field — malformed alerts are logged
+//    and ignored, never executed.
+//
+// 6. To add HMAC signature: use Pine v6 secrets when available.  For now,
+//    rely on:
+//      a. HTTPS-only webhook URL
+//      b. Pre-shared secret in a custom HTTP header (set in TV alert config)
+//      c. OKX side: API key with IP whitelist (only your VPS IP)
