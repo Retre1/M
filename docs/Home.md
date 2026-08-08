@@ -5,6 +5,7 @@
 ## Quick Links
 
 - [[architecture/system-overview|System Overview]]
+- [[architecture/tz-architecture|ТЗ — Архитектура программного комплекса]]
 - [[research/papers-index|Papers Index]]
 - [[runs/runs-index|Training Runs]]
 - [[decisions/decisions-index|Decision Log]]
