@@ -28,9 +28,9 @@ from apexfx.live.signal_generator import MTFSignalGenerator, SignalGenerator
 from apexfx.live.state_manager import StateManager
 from apexfx.risk.risk_manager import MarketState, RiskManager
 from apexfx.training.model_registry import ModelRegistry
+from apexfx.utils import prometheus as prom
 from apexfx.utils.logging import get_logger
 from apexfx.utils.math_utils import atr
-from apexfx.utils import prometheus as prom
 
 logger = get_logger(__name__)
 
@@ -770,31 +770,6 @@ class LiveTradingLoop:
         except Exception as e:
             logger.error("MT5 position sync failed", error=str(e))
 
-    def rollback_model(self) -> bool:
-        """Rollback to previous model version if available.
-
-        Returns True if rollback was successful, False if no previous model.
-        """
-        prev_path = getattr(self, "_previous_model_path", None)
-        if prev_path is None:
-            logger.warning("No previous model available for rollback")
-            return False
-
-        try:
-            self._signal_gen = SignalGenerator(prev_path, device="cpu")
-            self._current_model_path = prev_path
-            self._previous_model_path = None
-            self._model_version = getattr(self, "_model_version", 1) - 1
-            logger.info(
-                "Model rolled back successfully",
-                version=self._model_version,
-                path=prev_path,
-            )
-            return True
-        except Exception as e:
-            logger.error("Model rollback failed", error=str(e))
-            return False
-
     async def _force_close_if_needed(self, bar) -> None:
         """Force close open position if one exists."""
         state = self._state.state
@@ -1109,7 +1084,7 @@ class LiveTradingLoop:
         logger.info("Cleaning up...")
         try:
             await asyncio.wait_for(self._do_cleanup(), timeout=30.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error("Cleanup timed out after 30s — force exiting")
 
     async def _do_cleanup(self) -> None:

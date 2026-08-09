@@ -6,10 +6,8 @@ Uses mocks for MT5 and model, but real RiskManager, Executor, and StateManager.
 
 from __future__ import annotations
 
-import asyncio
-from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -21,10 +19,9 @@ from apexfx.config.schema import (
     RiskConfig,
     SymbolConfig,
 )
-from apexfx.execution.executor import ExecutionResult, Executor
+from apexfx.execution.executor import Executor
 from apexfx.live.state_manager import StateManager
 from apexfx.risk.risk_manager import MarketState, RiskDecision, RiskManager
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

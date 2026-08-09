@@ -30,10 +30,10 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import torch
-from stable_baselines3.common.callbacks import BaseCallback, CallbackList
-
 from apexfx.training.config import CurriculumV2Config, StageConfig
 from apexfx.training.curriculum_v2 import CurriculumV2, StageDataV2
+from stable_baselines3.common.callbacks import BaseCallback, CallbackList
+
 from apexfx.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -54,6 +54,7 @@ def _make_env_thunk(
     """
     def _thunk() -> Any:
         from stable_baselines3.common.monitor import Monitor
+
         from apexfx.env.forex_env import ForexTradingEnv
 
         env = ForexTradingEnv(
@@ -581,8 +582,9 @@ class TrainerV2:
         # World model callback
         if self._curriculum_config.world_model_enabled:
             try:
-                from apexfx.models.world_model import WorldModelCallback
                 from apexfx.models.config import WorldModelHybridConfig
+
+                from apexfx.models.world_model import WorldModelCallback
 
                 wm_config = WorldModelHybridConfig()
                 callbacks.append(WorldModelCallback(config=wm_config))

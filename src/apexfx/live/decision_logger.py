@@ -16,7 +16,7 @@ import csv
 import json
 import sqlite3
 import threading
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 

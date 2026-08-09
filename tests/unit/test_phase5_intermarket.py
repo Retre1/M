@@ -10,19 +10,16 @@ Covers:
 
 from __future__ import annotations
 
-import asyncio
-import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from apexfx.config.schema import NewsConfig, SymbolsConfig, DataConfig
+from apexfx.config.schema import DataConfig, NewsConfig, SymbolsConfig
 from apexfx.data.intermarket import INTERMARKET_SYMBOLS, IntermarketDataProvider
 from apexfx.data.realtime_news import NewsHeadline, RealtimeNewsStream
 from apexfx.features.intermarket_corr import IntermarketCorrExtractor
-
 
 # ---------------------------------------------------------------------------
 # IntermarketDataProvider
@@ -221,7 +218,7 @@ class TestSilentFailureFix:
         for i in range(200):
             h = NewsHeadline(
                 text=f"Headline {i}",
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
                 source="test",
             )
             stream._on_headline(h)
@@ -229,7 +226,7 @@ class TestSilentFailureFix:
         # Now add one more — should trigger overflow handling
         overflow_headline = NewsHeadline(
             text="Overflow headline 201",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             source="test",
         )
         stream._on_headline(overflow_headline)

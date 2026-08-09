@@ -1,7 +1,6 @@
 """Tests for reward functions."""
 
 import numpy as np
-import pytest
 
 from apexfx.env.reward import DifferentialSharpeReward, QuantumZScoreReward, SortinoReward
 

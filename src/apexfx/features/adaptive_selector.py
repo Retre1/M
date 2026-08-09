@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from apexfx.features.importance_tracker import FeatureImportanceTracker
@@ -30,7 +30,7 @@ class FeatureSelectionResult:
     drift_scores: dict[str, float]
     active_count: int
     total_count: int
-    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 class AdaptiveFeatureSelector:

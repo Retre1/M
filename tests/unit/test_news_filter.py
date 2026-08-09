@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-import pytest
-
 from apexfx.risk.news_filter import NewsEvent, NewsFilter
 
 

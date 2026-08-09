@@ -11,11 +11,10 @@ Tests for:
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, datetime
 
 import numpy as np
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Test: CalendarFetcher XML parsing
@@ -101,7 +100,7 @@ class TestCalendarFetcherXML:
         # 8:30 AM Eastern in January (EST = UTC-5) → 13:30 UTC
         assert nfp.time_utc.hour == 13
         assert nfp.time_utc.minute == 30
-        assert nfp.time_utc.tzinfo == timezone.utc
+        assert nfp.time_utc.tzinfo == UTC
 
 
 class TestNumericParsing:
@@ -167,7 +166,7 @@ class TestETtoUTC:
 
         et = datetime(2024, 1, 5, 8, 30)
         utc = _et_to_utc(et)
-        assert utc.tzinfo == timezone.utc
+        assert utc.tzinfo == UTC
 
 
 # ---------------------------------------------------------------------------
@@ -479,7 +478,7 @@ class TestCSVExport:
 
         events = [
             CalendarEvent(
-                time_utc=datetime(2024, 1, 5, 13, 30, tzinfo=timezone.utc),
+                time_utc=datetime(2024, 1, 5, 13, 30, tzinfo=UTC),
                 currency="USD",
                 name="Non-Farm Payrolls",
                 impact="high",
@@ -488,7 +487,7 @@ class TestCSVExport:
                 previous=199.0,
             ),
             CalendarEvent(
-                time_utc=datetime(2024, 1, 10, 13, 30, tzinfo=timezone.utc),
+                time_utc=datetime(2024, 1, 10, 13, 30, tzinfo=UTC),
                 currency="USD",
                 name="CPI",
                 impact="high",

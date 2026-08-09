@@ -18,12 +18,10 @@ from __future__ import annotations
 import json
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pandas as pd
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -318,7 +316,7 @@ class TestSmartExecution:
 
     def test_vwap_volume_profile(self):
         """VWAP executor should weight slices by volume profile."""
-        from apexfx.execution.smart_exec import VWAPExecutor, EURUSD_VOLUME_PROFILE
+        from apexfx.execution.smart_exec import VWAPExecutor
 
         vwap = VWAPExecutor(n_slices=4)
         order = vwap.create_plan(1.0, 1, "EURUSD", current_hour=8)
@@ -486,8 +484,8 @@ class TestOnlineLearner:
 
     def test_should_retrain_logic(self):
         """OnlineLearner should trigger retrain after min_new_bars."""
-        from apexfx.training.online_learner import OnlineLearner
         from apexfx.config.schema import AppConfig
+        from apexfx.training.online_learner import OnlineLearner
 
         config = AppConfig()
         learner = OnlineLearner(
@@ -502,8 +500,8 @@ class TestOnlineLearner:
 
     def test_should_not_retrain_below_threshold(self):
         """OnlineLearner should not retrain with too few bars."""
-        from apexfx.training.online_learner import OnlineLearner
         from apexfx.config.schema import AppConfig
+        from apexfx.training.online_learner import OnlineLearner
 
         config = AppConfig()
         learner = OnlineLearner(

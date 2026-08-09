@@ -11,7 +11,6 @@ import torch
 
 from apexfx.features.importance_tracker import FeatureImportanceTracker
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

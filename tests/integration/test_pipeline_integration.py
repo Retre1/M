@@ -11,12 +11,10 @@ Tests the full flow:
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import numpy as np
 import pandas as pd
-import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -34,7 +32,7 @@ def _generate_ohlcv_bars(n: int = 500, pair: str = "EURUSD") -> pd.DataFrame:
     volume = np.random.randint(100, 10000, n).astype(float)
     tick_volume = volume * np.random.uniform(1, 5, n)
     spread = np.random.uniform(0.00005, 0.00020, n)
-    start = datetime(2025, 1, 1, 0, 0, tzinfo=timezone.utc)
+    start = datetime(2025, 1, 1, 0, 0, tzinfo=UTC)
     times = [start + timedelta(hours=i) for i in range(n)]
 
     return pd.DataFrame({
@@ -181,7 +179,7 @@ class TestPhase7FeaturesIntegration:
 
         # Generate a full year of H1 bars
         n = 24 * 252  # ~252 trading days
-        start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        start = datetime(2025, 1, 1, tzinfo=UTC)
         bars = pd.DataFrame({
             "time": [start + timedelta(hours=i) for i in range(n)],
             "close": np.random.uniform(1.05, 1.15, n),
@@ -225,9 +223,9 @@ class TestPhase7FeaturesIntegration:
 
     def test_all_phase7_extractors_together(self):
         """All Phase 7 extractors produce compatible output shapes."""
+        from apexfx.features.central_bank import CentralBankExtractor
         from apexfx.features.cot import COTExtractor
         from apexfx.features.seasonal import SeasonalExtractor
-        from apexfx.features.central_bank import CentralBankExtractor
 
         bars = _generate_bars_with_cot(200)
 
@@ -260,8 +258,6 @@ class TestDynamicCorrelationIntegration:
         """When dynamic correlations are low, previously blocked trades pass."""
         from apexfx.live.portfolio_manager import (
             DynamicCorrelationTracker,
-            PortfolioManager,
-            _correlation_tracker,
         )
 
         # Create a fresh tracker with zero correlation between EURUSD and GBPUSD
@@ -365,13 +361,13 @@ class TestRiskManagerIntegration:
         guard = WeekendGapGuard(close_before_hour_utc=20)
 
         # Friday 21:00 UTC
-        friday_late = datetime(2025, 1, 3, 21, 0, tzinfo=timezone.utc)
+        friday_late = datetime(2025, 1, 3, 21, 0, tzinfo=UTC)
         should_block, scale = guard.check(friday_late)
         assert should_block
         assert scale == 0.0
 
         # Monday 10:00 UTC
-        monday = datetime(2025, 1, 6, 10, 0, tzinfo=timezone.utc)
+        monday = datetime(2025, 1, 6, 10, 0, tzinfo=UTC)
         should_block, scale = guard.check(monday)
         assert not should_block
         assert scale == 1.0
@@ -411,7 +407,7 @@ class TestCOTDataIntegration:
         data.records["EUR"] = []
         for i in range(10):
             data.records["EUR"].append(COTRecord(
-                report_date=datetime(2025, 1, 7, tzinfo=timezone.utc) + timedelta(weeks=i),
+                report_date=datetime(2025, 1, 7, tzinfo=UTC) + timedelta(weeks=i),
                 currency="EUR",
                 speculative_long=150000 + i * 1000,
                 speculative_short=100000 + i * 500,
@@ -438,7 +434,7 @@ class TestCOTDataIntegration:
         data.records["EUR"] = []
         for week in range(8):
             data.records["EUR"].append(COTRecord(
-                report_date=datetime(2025, 1, 7, tzinfo=timezone.utc) + timedelta(weeks=week),
+                report_date=datetime(2025, 1, 7, tzinfo=UTC) + timedelta(weeks=week),
                 currency="EUR",
                 speculative_net=50000 + week * 2000,
                 commercial_net=-30000,
@@ -450,7 +446,7 @@ class TestCOTDataIntegration:
 
         # Create H1 bars for the same period
         n = 24 * 56  # 56 days of H1 bars
-        start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        start = datetime(2025, 1, 1, tzinfo=UTC)
         bars = pd.DataFrame({
             "time": [start + timedelta(hours=i) for i in range(n)],
             "close": np.random.uniform(1.05, 1.15, n),
@@ -497,8 +493,8 @@ class TestFullPipelineWithPhase7:
 
     def test_pipeline_with_cot_extractor(self):
         """COT extractor integrates into FeaturePipeline."""
-        from apexfx.features.pipeline import FeaturePipeline
         from apexfx.features.cot import COTExtractor
+        from apexfx.features.pipeline import FeaturePipeline
 
         pipeline = FeaturePipeline(
             extractors=[COTExtractor(z_score_lookback=5)],
@@ -513,10 +509,10 @@ class TestFullPipelineWithPhase7:
 
     def test_pipeline_with_all_phase7_extractors(self):
         """All Phase 7 extractors work together in a pipeline."""
-        from apexfx.features.pipeline import FeaturePipeline
-        from apexfx.features.cot import COTExtractor
-        from apexfx.features.seasonal import SeasonalExtractor
         from apexfx.features.central_bank import CentralBankExtractor
+        from apexfx.features.cot import COTExtractor
+        from apexfx.features.pipeline import FeaturePipeline
+        from apexfx.features.seasonal import SeasonalExtractor
 
         pipeline = FeaturePipeline(
             extractors=[
@@ -537,9 +533,9 @@ class TestFullPipelineWithPhase7:
     def test_mixed_pipeline_default_plus_phase7(self):
         """Phase 7 extractors work alongside default extractors."""
         from apexfx.features.pipeline import FeaturePipeline
+        from apexfx.features.regime import RegimeExtractor
         from apexfx.features.seasonal import SeasonalExtractor
         from apexfx.features.volume_profile import VolumeProfileExtractor
-        from apexfx.features.regime import RegimeExtractor
 
         pipeline = FeaturePipeline(
             extractors=[

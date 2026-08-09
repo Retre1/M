@@ -6,13 +6,10 @@ import csv
 import json
 import threading
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
-import pytest
-
 from apexfx.live.decision_logger import DecisionLogger, DecisionRecord
-
 
 # ---------------------------------------------------------------------------
 # Helpers — lightweight stand-in for TradingSignal (avoids heavy imports)

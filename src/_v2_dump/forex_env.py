@@ -19,6 +19,7 @@ from typing import Any
 import gymnasium as gym
 import numpy as np
 import pandas as pd
+from apexfx.env.reward_v5 import RARAReward_v5
 from gymnasium import spaces
 
 from apexfx.env.obs_builder import ObservationBuilder
@@ -29,7 +30,6 @@ from apexfx.env.reward import (
     QuantumZScoreReward,
     TradingReward,
 )
-from apexfx.env.reward_v5 import RARAReward_v5
 
 
 class SpreadModel:

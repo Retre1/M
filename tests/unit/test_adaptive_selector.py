@@ -14,7 +14,6 @@ from apexfx.features.adaptive_selector import (
 )
 from apexfx.features.importance_tracker import FeatureImportanceTracker
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

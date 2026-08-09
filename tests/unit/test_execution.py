@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
-from dataclasses import dataclass
-from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import datetime
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -17,17 +15,14 @@ from apexfx.config.schema import (
     SymbolConfig,
 )
 from apexfx.data.mt5_client import (
-    OrderType,
     Position,
     SymbolInfo,
     TradeAction,
-    TradeRequest,
     TradeResult,
 )
 from apexfx.execution.executor import ExecutionResult, Executor
-from apexfx.execution.order_manager import ManagedOrder, OrderManager, OrderStatus
+from apexfx.execution.order_manager import OrderManager, OrderStatus
 from apexfx.risk.risk_manager import KillSwitch, RiskDecision
-
 
 # ---------------------------------------------------------------------------
 # Helpers / fixtures

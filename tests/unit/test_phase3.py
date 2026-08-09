@@ -12,13 +12,11 @@ Tests for:
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime
 
 import numpy as np
 import pandas as pd
-import pytest
 import torch
-
 
 # ---------------------------------------------------------------------------
 # Test: CalendarProvider
@@ -31,7 +29,7 @@ class TestCalendarProvider:
         provider = CalendarProvider()
         events = [
             CalendarEvent(
-                time_utc=datetime(2024, 1, 5, 13, 30, tzinfo=timezone.utc),
+                time_utc=datetime(2024, 1, 5, 13, 30, tzinfo=UTC),
                 currency="USD",
                 name="Non-Farm Payrolls",
                 impact="high",
@@ -40,7 +38,7 @@ class TestCalendarProvider:
                 previous=199.0,
             ),
             CalendarEvent(
-                time_utc=datetime(2024, 1, 10, 13, 30, tzinfo=timezone.utc),
+                time_utc=datetime(2024, 1, 10, 13, 30, tzinfo=UTC),
                 currency="USD",
                 name="CPI",
                 impact="high",
@@ -49,7 +47,7 @@ class TestCalendarProvider:
                 previous=3.1,
             ),
             CalendarEvent(
-                time_utc=datetime(2024, 1, 11, 8, 0, tzinfo=timezone.utc),
+                time_utc=datetime(2024, 1, 11, 8, 0, tzinfo=UTC),
                 currency="EUR",
                 name="ECB Rate Decision",
                 impact="high",
@@ -63,8 +61,8 @@ class TestCalendarProvider:
 
     def test_get_events_filters_by_currency(self):
         provider = self._make_provider()
-        start = datetime(2024, 1, 1, tzinfo=timezone.utc)
-        end = datetime(2024, 1, 31, tzinfo=timezone.utc)
+        start = datetime(2024, 1, 1, tzinfo=UTC)
+        end = datetime(2024, 1, 31, tzinfo=UTC)
 
         usd_events = provider.get_events(start, end, currencies=["USD"])
         assert len(usd_events) == 2
@@ -78,7 +76,7 @@ class TestCalendarProvider:
 
     def test_next_event(self):
         provider = self._make_provider()
-        as_of = datetime(2024, 1, 6, tzinfo=timezone.utc)
+        as_of = datetime(2024, 1, 6, tzinfo=UTC)
         nxt = provider.next_event(as_of, currencies=["USD"])
         assert nxt is not None
         assert "CPI" in nxt.name
@@ -87,7 +85,7 @@ class TestCalendarProvider:
         from apexfx.data.calendar_provider import CalendarEvent
         # Higher NFP = hawkish
         e = CalendarEvent(
-            time_utc=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            time_utc=datetime(2024, 1, 1, tzinfo=UTC),
             currency="USD", name="Non-Farm Payrolls", impact="high",
             actual=300.0, forecast=200.0,
         )
@@ -95,7 +93,7 @@ class TestCalendarProvider:
 
         # Higher unemployment = dovish
         e2 = CalendarEvent(
-            time_utc=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            time_utc=datetime(2024, 1, 1, tzinfo=UTC),
             currency="USD", name="Unemployment Rate", impact="high",
             actual=4.5, forecast=4.0,
         )
@@ -134,7 +132,7 @@ class TestFundamentalExtractor:
 
         events = [
             CalendarEvent(
-                time_utc=datetime(2024, 1, 5, 13, 30, tzinfo=timezone.utc),
+                time_utc=datetime(2024, 1, 5, 13, 30, tzinfo=UTC),
                 currency="USD", name="Non-Farm Payrolls", impact="high",
                 actual=216.0, forecast=170.0,
             ),
@@ -154,17 +152,17 @@ class TestFundamentalExtractor:
         # Need at least 3 events of same name for proper std computation
         events = [
             CalendarEvent(
-                time_utc=datetime(2024, 1, 5, 13, 30, tzinfo=timezone.utc),
+                time_utc=datetime(2024, 1, 5, 13, 30, tzinfo=UTC),
                 currency="USD", name="CPI", impact="high",
                 actual=3.5, forecast=3.0,
             ),
             CalendarEvent(
-                time_utc=datetime(2023, 12, 12, 13, 30, tzinfo=timezone.utc),
+                time_utc=datetime(2023, 12, 12, 13, 30, tzinfo=UTC),
                 currency="USD", name="CPI", impact="high",
                 actual=3.2, forecast=3.1,
             ),
             CalendarEvent(
-                time_utc=datetime(2023, 11, 14, 13, 30, tzinfo=timezone.utc),
+                time_utc=datetime(2023, 11, 14, 13, 30, tzinfo=UTC),
                 currency="USD", name="CPI", impact="high",
                 actual=3.3, forecast=3.2,
             ),

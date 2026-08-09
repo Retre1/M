@@ -24,8 +24,7 @@ Metrics exposed:
 from __future__ import annotations
 
 import threading
-import time
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 
 from apexfx.utils.logging import get_logger

@@ -10,13 +10,11 @@ Tests cover:
 
 from __future__ import annotations
 
-from collections import deque
-from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from datetime import UTC, datetime
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -137,8 +135,8 @@ class TestAugmentation:
 
     def test_position_state_never_augmented(self):
         """position_state must NEVER be modified by augmentation."""
-        from apexfx.training.augmentation import AugmentedObsWrapper
         from apexfx.config.schema import AugmentationConfig
+        from apexfx.training.augmentation import AugmentedObsWrapper
 
         cfg = AugmentationConfig(
             time_warp_prob=1.0,
@@ -235,16 +233,16 @@ class TestMultiSymbolLoop:
     """Tests for MultiSymbolTradingLoop."""
 
     def test_init_with_symbols(self):
-        from apexfx.live.multi_symbol_loop import MultiSymbolTradingLoop
         from apexfx.config.schema import AppConfig
+        from apexfx.live.multi_symbol_loop import MultiSymbolTradingLoop
         config = AppConfig()
         loop = MultiSymbolTradingLoop(config, ["EURUSD", "GBPUSD"])
         assert loop.symbols == ["EURUSD", "GBPUSD"]
         assert loop.portfolio is not None
 
     def test_shared_portfolio(self):
-        from apexfx.live.multi_symbol_loop import MultiSymbolTradingLoop
         from apexfx.config.schema import AppConfig
+        from apexfx.live.multi_symbol_loop import MultiSymbolTradingLoop
         config = AppConfig()
         loop = MultiSymbolTradingLoop(config, ["EURUSD", "GBPUSD"])
         # Portfolio should be shared across symbols
@@ -273,8 +271,8 @@ class TestLiveOnlineLearner:
         return model
 
     def test_buffer_recording(self):
-        from apexfx.live.online_learner import LiveOnlineLearner
         from apexfx.config.schema import OnlineLearningConfig
+        from apexfx.live.online_learner import LiveOnlineLearner
         cfg = OnlineLearningConfig(enabled=True, mini_buffer_size=100)
         model = self._make_mock_model()
         learner = LiveOnlineLearner(model, cfg)
@@ -284,8 +282,8 @@ class TestLiveOnlineLearner:
         assert len(learner._mini_buffer) == 1
 
     def test_trade_result_tracking(self):
-        from apexfx.live.online_learner import LiveOnlineLearner
         from apexfx.config.schema import OnlineLearningConfig
+        from apexfx.live.online_learner import LiveOnlineLearner
         cfg = OnlineLearningConfig(enabled=True)
         model = self._make_mock_model()
         learner = LiveOnlineLearner(model, cfg)
@@ -296,8 +294,8 @@ class TestLiveOnlineLearner:
         assert len(learner._rolling_returns) == 5
 
     def test_drift_detection_negative_sharpe(self):
-        from apexfx.live.online_learner import LiveOnlineLearner
         from apexfx.config.schema import OnlineLearningConfig
+        from apexfx.live.online_learner import LiveOnlineLearner
         cfg = OnlineLearningConfig(
             enabled=True,
             drift_detection_window=30,
@@ -314,8 +312,8 @@ class TestLiveOnlineLearner:
         assert learner._detect_drift() is True
 
     def test_no_drift_with_positive_returns(self):
-        from apexfx.live.online_learner import LiveOnlineLearner
         from apexfx.config.schema import OnlineLearningConfig
+        from apexfx.live.online_learner import LiveOnlineLearner
         cfg = OnlineLearningConfig(
             enabled=True,
             drift_detection_window=30,
@@ -330,8 +328,8 @@ class TestLiveOnlineLearner:
         assert learner._detect_drift() is False
 
     def test_rollback(self):
-        from apexfx.live.online_learner import LiveOnlineLearner
         from apexfx.config.schema import OnlineLearningConfig
+        from apexfx.live.online_learner import LiveOnlineLearner
         cfg = OnlineLearningConfig(enabled=True, max_rollback_checkpoints=3)
         model = self._make_mock_model()
         learner = LiveOnlineLearner(model, cfg)
@@ -366,7 +364,7 @@ class TestRegimeExecution:
             breakout_agent_action=0.1,
             gating_weights=(0.5, 0.3, 0.2),
             regime="trending",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             inference_time_ms=1.0,
         )
         assert hasattr(signal, "uncertainty_score")

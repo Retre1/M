@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -14,8 +13,8 @@ from apexfx.config.schema import (
     CooldownConfig,
     PositionSizingConfig,
     RiskConfig,
-    StressTestConfig,
     StrategyFilterConfig,
+    StressTestConfig,
 )
 from apexfx.risk.risk_manager import (
     DailyLossGuard,
@@ -26,7 +25,6 @@ from apexfx.risk.risk_manager import (
     VolatilityTargeter,
     WeekendGapGuard,
 )
-
 
 # ---------------------------------------------------------------------------
 # KillSwitch

@@ -31,6 +31,7 @@ class TestTradingRewardIntegration:
     def _make_env(self):
         """Create minimal ForexTradingEnv with TradingReward."""
         import pandas as pd
+
         from apexfx.env.forex_env import ForexTradingEnv
         from apexfx.env.reward import TradingReward
 

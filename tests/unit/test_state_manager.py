@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import json
-import tempfile
 from dataclasses import asdict
 from pathlib import Path
 
 import pytest
 
 from apexfx.live.state_manager import PortfolioState, StateManager, WALEntry
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
