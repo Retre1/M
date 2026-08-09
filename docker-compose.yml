@@ -6,7 +6,139 @@
 version: "3.9"
 
 services:
-  # --- Trading Engine ---
+  # ── GPU Training (full curriculum) ───────────────────────────────
+  train:
+    build:
+      context: .
+      target: app
+    container_name: apexfx-train
+    environment:
+      - PYTHONPATH=/app/src
+      - NVIDIA_VISIBLE_DEVICES=all
+      - APEXFX_ENV=gpu1
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./logs:/app/logs
+      - ./configs:/app/configs
+    command: >
+      python scripts/train.py
+        --symbol EURUSD
+        --timeframe H1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+        limits:
+          memory: 32G
+
+  # ── Hyperparameter Optimization ──────────────────────────────────
+  hyperopt:
+    build:
+      context: .
+      target: app
+    container_name: apexfx-hyperopt
+    environment:
+      - PYTHONPATH=/app/src
+      - NVIDIA_VISIBLE_DEVICES=all
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./logs:/app/logs
+      - ./configs:/app/configs
+    command: >
+      python scripts/hyperopt_sac.py
+        --n-trials 40
+        --timesteps 50000
+        --device cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+        limits:
+          memory: 16G
+
+  # ── Download Market Data ─────────────────────────────────────────
+  download-data:
+    build:
+      context: .
+      target: app
+    container_name: apexfx-data
+    volumes:
+      - ./data:/app/data
+    command: >
+      python scripts/download_forex_data.py
+        --symbols EURUSD GBPUSD USDJPY AUDUSD USDCHF NZDUSD
+        --days 700
+
+  # ── Pretrain TFT Encoder ─────────────────────────────────────────
+  pretrain:
+    build:
+      context: .
+      target: app
+    container_name: apexfx-pretrain
+    environment:
+      - PYTHONPATH=/app/src
+      - NVIDIA_VISIBLE_DEVICES=all
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./logs:/app/logs
+      - ./configs:/app/configs
+    command: >
+      python scripts/pretrain_tft.py
+        --device cuda
+        --epochs 50
+        --batch-size 512
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # ── Backtest ─────────────────────────────────────────────────────
+  backtest:
+    build:
+      context: .
+      target: app
+    container_name: apexfx-backtest
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./logs:/app/logs
+      - ./configs:/app/configs
+    command: >
+      python scripts/run_synthetic_backtest.py
+        --real-data
+        --symbol EURUSD
+    ports:
+      - "8080:8080"
+
+  # ── TensorBoard ──────────────────────────────────────────────────
+  tensorboard:
+    build:
+      context: .
+      target: app
+    container_name: apexfx-tensorboard
+    volumes:
+      - ./logs:/app/logs:ro
+    ports:
+      - "6006:6006"
+    command: >
+      tensorboard
+        --logdir /app/logs/tensorboard
+        --host 0.0.0.0
+        --port 6006
+
+  # ── Live Trading Engine ──────────────────────────────────────────
   engine:
     build:
       context: .

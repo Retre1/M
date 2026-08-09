@@ -17,6 +17,9 @@ dependencies = [
     # TQC lives in sb3-contrib and is imported at module scope by
     # apexfx.training.trainer — without it the trainer cannot be imported.
     "sb3-contrib>=2.0",
+    "tensorboard>=2.15",
+    "tqdm>=4.66",
+    "rich>=13.0",
     "pandas>=2.0",
     "numpy>=1.24",
     "scipy>=1.11",
@@ -41,6 +44,10 @@ dashboard = [
     "dash>=2.14",
     "dash-bootstrap-components>=1.5",
 ]
+quantum = [
+    "pennylane>=0.35",
+    "tensornetwork>=0.4",
+]
 dev = [
     "pytest>=7.4",
     "pytest-cov>=4.1",
@@ -53,7 +60,7 @@ dev = [
     "optuna>=3.4",
     "tensorboard>=2.15",
 ]
-all = ["apexfx-quantum[mt5,nlp,dashboard,dev]"]
+all = ["apexfx-quantum[mt5,nlp,dashboard,quantum,dev]"]
 
 [project.scripts]
 apexfx-train = "scripts.train:main"
