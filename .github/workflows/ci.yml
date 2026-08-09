@@ -28,7 +28,14 @@ jobs:
       - name: TruffleHog secret scan
         uses: trufflesecurity/trufflehog@main
         with:
-          extra_args: --only-verified
+          # Lob is excluded: its key pattern is [a-z]{4}_ plus 35 characters,
+          # which any 40-character pytest method name matches — the repository
+          # already has 16 of them, e.g. test_conservative_with_insufficient_data.
+          # Lob's API answers those candidates in a way TruffleHog reads as
+          # verified, so the check fails on a test rename with no secret in
+          # sight. The project has no Lob integration, so the detector can only
+          # produce false positives here. Every other detector stays on.
+          extra_args: --only-verified --exclude-detectors=Lob
 
   # --- Linting ---
   lint:

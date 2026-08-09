@@ -51,7 +51,7 @@ class TestStageMapping:
         assert stage.sbbts_ratio == default.sbbts_ratio
         assert stage.real_ratio == default.real_ratio
 
-    def test_nested_augmentation_noise_is_mapped(self, tmp_path: Path):
+    def test_augmentation_noise_is_mapped(self, tmp_path: Path):
         cfg_dir = _write(tmp_path, {
             "curriculum": {"stages": [
                 {"name": "real_adversarial", "augmentation": {"noise_std": 0.007}},
@@ -109,7 +109,7 @@ class TestUnmappedKeysAreReported:
         })
         assert load_curriculum_v2_config(cfg_dir).stages[0].total_timesteps == 5
 
-    def test_missing_file_falls_back_to_defaults(self, tmp_path: Path):
+    def test_missing_file_uses_defaults(self, tmp_path: Path):
         assert load_curriculum_v2_config(tmp_path) == CurriculumV2Config()
 
 
