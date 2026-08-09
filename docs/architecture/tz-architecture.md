@@ -396,6 +396,15 @@ curriculum-стадиями; `training/walk_forward.py` — walk-forward вал�
    `docs/architecture/system-overview.md` и `docs/runs/*` ссылаются на
    несуществующий `ProfitFocusedReward v4`.
 
+7. **Исправление измерителя обучения — блокер для следующего прогона.**
+   `sharpe` и `profit_factor` считаются по ряду наград эпизодов, а не по
+   реализованному PnL, из-за чего метрики всех шести прогонов недействительны, а
+   `profit_factor` тождественно равен нулю и обрывает стадии через early-stop.
+   Кроме того, экспериментальная история (ветка `v2.0-quantum-hybrid`) и фиксы
+   аудита (ветка `main`) не пересекаются. Полный разбор с кодом и арифметикой:
+   [[../analysis/metrics-invalidation|Анализ: метрики прогонов 1–6
+   недействительны]].
+
 ---
 
 #architecture #tz #specification
