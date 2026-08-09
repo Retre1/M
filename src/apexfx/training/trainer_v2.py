@@ -25,6 +25,8 @@ Usage::
 from __future__ import annotations
 
 import contextlib
+import math
+from collections import deque
 from pathlib import Path
 from typing import Any
 
@@ -36,8 +38,34 @@ from stable_baselines3.common.callbacks import BaseCallback, CallbackList
 from apexfx.training.config import CurriculumV2Config, StageConfig
 from apexfx.training.curriculum_v2 import CurriculumV2, StageDataV2
 from apexfx.utils.logging import get_logger
+from apexfx.utils.metrics import (
+    expectancy,
+    max_drawdown,
+    profit_factor,
+    sharpe_ratio,
+    sortino_ratio,
+    win_rate,
+)
 
 logger = get_logger(__name__)
+
+# H1 bars: 24 per day across ~252 trading days. Annualising a bar-level return
+# series with 252 (as runs 1-6 did) understates Sharpe by sqrt(24).
+BARS_PER_YEAR_H1 = 24 * 252
+
+
+def _finite(value: float) -> float:
+    """Map inf/NaN onto finite sentinels so comparisons and logging behave.
+
+    ``profit_factor`` and ``sortino_ratio`` return ``inf`` when there are no
+    losing observations — true, but an ``inf`` flowing into early-stop deltas
+    or a TensorBoard scalar is worse than useless.
+    """
+    if math.isnan(value):
+        return 0.0
+    if math.isinf(value):
+        return 999.0 if value > 0 else -999.0
+    return float(value)
 
 
 # ── Picklable env thunk factory (module-level for SubprocVecEnv) ──────
@@ -91,13 +119,24 @@ class CurriculumV2Callback(BaseCallback):
         stage_idx: int,
         check_freq: int = 10000,
         verbose: int = 0,
+        periods_per_year: int = BARS_PER_YEAR_H1,
+        pool_episodes: int = 100,
     ) -> None:
         super().__init__(verbose)
         self._curriculum = curriculum
         self._stage_idx = stage_idx
         self._check_freq = check_freq
+        self._periods_per_year = periods_per_year
+        self._pool_episodes = pool_episodes
         self._episode_rewards: list[float] = []
         self._episode_lengths: list[int] = []
+        # Realised performance of recent episodes, pooled for the financial
+        # metrics. Bar returns drive Sharpe/Sortino/drawdown; trade returns
+        # drive profit factor and win rate, matching the OOS backtest's
+        # definition so training and evaluation numbers are comparable.
+        self._bar_returns: deque[np.ndarray] = deque(maxlen=pool_episodes)
+        self._trade_returns: deque[np.ndarray] = deque(maxlen=pool_episodes)
+        self._episode_trade_counts: deque[int] = deque(maxlen=pool_episodes)
         self._should_stop = False
 
     def _on_step(self) -> bool:
@@ -107,6 +146,13 @@ class CurriculumV2Callback(BaseCallback):
             if "episode" in info:
                 self._episode_rewards.append(info["episode"]["r"])
                 self._episode_lengths.append(info["episode"]["l"])
+            fin = info.get("episode_financials")
+            if fin is not None:
+                self._bar_returns.append(np.asarray(fin["returns"], dtype=np.float64))
+                self._trade_returns.append(
+                    np.asarray(fin["trade_returns"], dtype=np.float64),
+                )
+                self._episode_trade_counts.append(int(fin["n_trades"]))
 
         # Periodic check
         if self.num_timesteps % self._check_freq == 0 and self._episode_rewards:
@@ -142,8 +188,26 @@ class CurriculumV2Callback(BaseCallback):
         return True
 
     def get_metrics(self) -> dict[str, float]:
-        """Collect current training metrics (public — used by trainer too)."""
-        recent = self._episode_rewards[-100:]
+        """Collect current training metrics (public — used by trainer too).
+
+        ``sharpe`` and ``profit_factor`` are computed from realised PnL, not
+        from the reward series. Runs 1-6 used the reward series for both, which
+        made every number they reported meaningless:
+
+        * ``profit_factor`` summed positive against negative *episode rewards*.
+          Every run had a negative ``ep_rew_mean``, so the positive set was
+          always empty and PF was identically 0.0 no matter how the agent
+          traded. That zero then fed the AND-logic early stop and cut stages at
+          18-27% of their budget.
+        * ``sharpe`` was ``mean/std`` over those same rewards — which is how a
+          "Sharpe" of -700000 appears. It also moved whenever the reward
+          weights were retuned between runs, so the -147 -> -58 -> -52
+          progression compared quantities on different scales.
+
+        The reward-series figures are still emitted, under names that say what
+        they are, so old logs remain interpretable.
+        """
+        recent = self._episode_rewards[-self._pool_episodes:]
         rewards = np.array(recent) if recent else np.array([0.0])
 
         metrics: dict[str, float] = {
@@ -152,19 +216,45 @@ class CurriculumV2Callback(BaseCallback):
             "n_episodes": len(self._episode_rewards),
         }
 
-        # Sharpe ratio (annualized, assuming ~252 trading days)
+        # The quantity runs 1-6 called "sharpe" — kept for continuity with
+        # those logs, named for what it actually is.
         if len(rewards) > 1 and np.std(rewards) > 0:
-            metrics["sharpe"] = float(np.mean(rewards) / np.std(rewards) * np.sqrt(252))
+            metrics["reward_sharpe"] = float(
+                np.mean(rewards) / np.std(rewards) * np.sqrt(252),
+            )
         else:
-            metrics["sharpe"] = 0.0
+            metrics["reward_sharpe"] = 0.0
 
-        # Profit factor
-        gains = rewards[rewards > 0].sum()
-        losses = abs(rewards[rewards < 0].sum())
-        metrics["profit_factor"] = float(gains / max(losses, 1e-8))
-
+        metrics.update(self._financial_metrics())
         metrics["gating_entropy"] = self._read_entropy()
         return metrics
+
+    def _financial_metrics(self) -> dict[str, float]:
+        """Sharpe, profit factor and friends over realised returns."""
+        bar_returns = (
+            np.concatenate(list(self._bar_returns)) if self._bar_returns else np.zeros(0)
+        )
+        trade_returns = (
+            np.concatenate(list(self._trade_returns)) if self._trade_returns else np.zeros(0)
+        )
+
+        n_trades = int(sum(self._episode_trade_counts))
+        trades_per_episode = (
+            n_trades / len(self._episode_trade_counts) if self._episode_trade_counts else 0.0
+        )
+
+        return {
+            "sharpe": sharpe_ratio(bar_returns, periods=self._periods_per_year),
+            "sortino": _finite(sortino_ratio(bar_returns, periods=self._periods_per_year)),
+            "max_drawdown": max_drawdown(bar_returns),
+            # Profit factor over closed trades: the same definition the OOS
+            # backtest reports, so the two can be compared directly.
+            "profit_factor": _finite(profit_factor(trade_returns)),
+            "win_rate": win_rate(trade_returns),
+            "expectancy": expectancy(trade_returns),
+            "n_trades": float(n_trades),
+            "trades_per_episode": float(trades_per_episode),
+        }
 
     def _read_entropy(self) -> float:
         """Read live entropy from the model.

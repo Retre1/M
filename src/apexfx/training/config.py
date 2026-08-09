@@ -43,14 +43,25 @@ class AdaptiveLRConfig(BaseModel, frozen=True):
 class MultiMetricEarlyStopConfig(BaseModel, frozen=True):
     """Early stopping based on multiple metrics.
 
-    Monitors ep_rew_mean, Sharpe, profit_factor, gating_entropy.
-    Stops if ALL metrics fail to improve for `patience` evaluations.
+    Monitors ep_rew_mean, Sharpe and profit_factor. Stops only if ALL of them
+    fail to improve for `patience` evaluations.
+
+    ``min_delta_profit_factor`` was set to -1.0 for Run 4, when profit_factor
+    was computed from episode rewards and so was identically 0.0. A metric that
+    never improves stalls immediately and, under the all-must-stall rule, stops
+    holding training open — which is how runs 2 and 3 were cut at 18-27% of
+    their stage budgets. A *negative* delta is the opposite failure: the
+    comparison ``val > best + delta`` then passes almost always, the counter
+    never stalls, and early stopping can never fire at all.
+
+    Now that profit_factor is computed from realised trade returns it carries
+    information again, so the threshold is a small positive number.
     """
     enabled: bool = True
     patience: int = 60
     min_delta_reward: float = 0.01
     min_delta_sharpe: float = 0.05
-    min_delta_profit_factor: float = -1.0
+    min_delta_profit_factor: float = 0.01
     check_freq: int = 10000
 
 

@@ -602,7 +602,44 @@ class ForexTradingEnv(gym.Env):
         obs = self._get_observation()
         info = self._get_info()
 
+        if terminated or truncated:
+            info["episode_financials"] = self._episode_financials()
+
         return obs, float(reward), terminated, truncated, info
+
+    def _episode_financials(self) -> dict[str, Any]:
+        """Realised performance of the finished episode, for honest metrics.
+
+        Emitted once per episode so callbacks can score the agent on money
+        rather than on the shaped reward. Runs 1-6 were judged by ``mean/std``
+        over the reward series and a "profit factor" summed from episode
+        rewards, which is why PF read 0.0 in every stage of every run: the
+        rewards were negative throughout, so the positive-reward set was empty.
+        Neither number said anything about trading.
+
+        ``returns`` is the per-bar simple return of the equity curve, which is
+        what a financial Sharpe is defined over. ``trade_returns`` is per
+        closed trade, which is what a trade-level profit factor needs — the two
+        answer different questions and both are carried.
+        """
+        equity = np.asarray(self._equity_curve, dtype=np.float64)
+        if equity.size >= 2:
+            prev = equity[:-1]
+            # Guard the ruined-account case: equity can touch 0 on bankruptcy.
+            returns = np.divide(
+                np.diff(equity), prev, out=np.zeros(equity.size - 1), where=prev > 0,
+            )
+        else:
+            returns = np.zeros(0, dtype=np.float64)
+
+        return {
+            "returns": returns,
+            "trade_returns": np.asarray(self._trade_returns, dtype=np.float64),
+            "equity_start": float(equity[0]) if equity.size else self._initial_balance,
+            "equity_end": float(self._portfolio_value),
+            "n_trades": int(self._total_trades),
+            "n_bars": int(returns.size),
+        }
 
     def _get_current_zscore(self) -> float:
         """Extract current price Z-Score from features if available."""

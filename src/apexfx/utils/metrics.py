@@ -22,7 +22,10 @@ def sortino_ratio(returns: np.ndarray, risk_free_rate: float = 0.0, periods: int
     if len(excess) < 2:
         return 0.0
     downside = excess[excess < 0]
-    if len(downside) == 0:
+    # ddof=1 needs at least two observations; with one it returns NaN and emits
+    # a "Degrees of freedom <= 0" warning. Too few downside points to measure
+    # deviation is the same situation as none at all.
+    if len(downside) < 2:
         return float("inf")
     downside_std = np.std(downside, ddof=1)
     if downside_std < 1e-10:
