@@ -14,6 +14,7 @@ Changes from original:
 
 from __future__ import annotations
 
+import contextlib
 from typing import Any
 
 import gymnasium as gym
@@ -466,7 +467,7 @@ class ForexTradingEnv(gym.Env):
         self._action_queue.append(action_value)
         if self._current_idx < len(self._data):
             # Set Z-Score for reward before execution
-            if isinstance(self._reward_fn, QuantumZScoreReward) or isinstance(self._reward_fn, HoldAwareReward):
+            if isinstance(self._reward_fn, (QuantumZScoreReward, HoldAwareReward)):
                 z_score = self._get_current_zscore()
                 self._reward_fn.set_zscore(z_score)
 
@@ -646,10 +647,8 @@ class ForexTradingEnv(gym.Env):
         if self._current_idx < len(self._data):
             row = self._data.iloc[self._current_idx]
             if "time" in row.index:
-                try:
+                with contextlib.suppress(Exception):
                     hour = pd.Timestamp(row["time"]).hour
-                except Exception:
-                    pass
 
         current_atr = self._get_current_atr()
         historical_atr = self._historical_atr or current_atr
@@ -703,10 +702,8 @@ class ForexTradingEnv(gym.Env):
             if self._current_idx < len(self._data):
                 row = self._data.iloc[self._current_idx]
                 if "time" in row.index:
-                    try:
+                    with contextlib.suppress(Exception):
                         hour = pd.Timestamp(row["time"]).hour
-                    except Exception:
-                        pass
             filled_size, fill_rate = self._partial_fill_model.simulate_fill(
                 size, hour, self._get_current_atr()
             )
@@ -768,10 +765,10 @@ class ForexTradingEnv(gym.Env):
                 "entry_idx": self._current_idx,
             })
             # Update weighted avg entry price for stop-loss
-            total_size = sum(l["size"] for l in self._position_layers)
+            total_size = sum(layer["size"] for layer in self._position_layers)
             if total_size > 0:
                 self._entry_price = (
-                    sum(l["size"] * l["entry_price"] for l in self._position_layers)
+                    sum(layer["size"] * layer["entry_price"] for layer in self._position_layers)
                     / total_size
                 )
 

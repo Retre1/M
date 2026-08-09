@@ -34,11 +34,11 @@ def _ensure_pennylane() -> Any:
             import pennylane as qml
 
             _qml = qml
-        except ImportError:
+        except ImportError as err:
             raise ImportError(
                 "PennyLane is required for quantum kernels. "
                 "Install with: pip install pennylane"
-            )
+            ) from err
     return _qml
 
 

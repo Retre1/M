@@ -104,7 +104,7 @@ class CrossAgentAttention(nn.Module):
         """
         # 1. Project to common space  →  (batch, n_agents, d_attn)
         projected = torch.stack(
-            [proj(h) for proj, h in zip(self.in_projections, agent_hiddens)],
+            [proj(h) for proj, h in zip(self.in_projections, agent_hiddens, strict=False)],
             dim=1,
         )
 

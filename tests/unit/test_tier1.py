@@ -288,7 +288,7 @@ class TestLiveOnlineLearner:
         model = self._make_mock_model()
         learner = LiveOnlineLearner(model, cfg)
 
-        for i in range(5):
+        for _i in range(5):
             learner.record_trade_result(0.01)
         assert learner.trade_count == 5
         assert len(learner._rolling_returns) == 5

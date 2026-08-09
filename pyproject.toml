@@ -79,6 +79,38 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "SIM", "TCH"]
 
+ignore = [
+    # Uppercase locals are the notation of the domain, not sloppiness: X is a
+    # feature matrix, Q/K/V are attention projections, T/N/W are tensor
+    # dimensions, R_t and delta_A come straight from the differential-Sharpe
+    # formula. Lowercasing them would make the code read further from the
+    # papers and formulas it implements.
+    "N803",  # argument name should be lowercase
+    "N806",  # variable in function should be lowercase
+    "N812",  # lowercase imported as non-lowercase (np.linalg as LA, etc.)
+    "N813",  # camelcase imported as lowercase
+    # Pydantic resolves annotations at runtime to build model fields, so moving
+    # imports into a TYPE_CHECKING block is not safe here by inspection alone —
+    # ruff cannot tell a pydantic field from a plain annotation. Revisit only
+    # with a per-module audit.
+    "TC001",
+    "TC002",
+    "TC003",
+    # (str, Enum) -> StrEnum is not a pure refactor: str() on a (str, Enum)
+    # member yields "Class.MEMBER", on a StrEnum it yields the value. These
+    # enums are read from and written to YAML, so the change is observable.
+    "UP042",
+    # RARAReward_v5 and HiveMindGating_v2 carry a version in the name on
+    # purpose; renaming them would break the isinstance dispatch in
+    # forex_env.step() and every run log and document that refers to them.
+    "N801",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests deliberately build objects they then throw away, and a few assert on
+# broad exception types where the specific class is an implementation detail.
+"tests/**" = ["F841", "B017"]
+
 [tool.mypy]
 python_version = "3.11"
 strict = true

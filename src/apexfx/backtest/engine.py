@@ -277,10 +277,7 @@ class BacktestEngine:
                 return True
 
         # Open new position
-        if self._position is None and abs(action) >= 0.05:
-            return True
-
-        return False
+        return bool(self._position is None and abs(action) >= 0.05)
 
     def _execute_signal(
         self,
@@ -295,11 +292,12 @@ class BacktestEngine:
         direction = int(np.sign(action))
 
         # Close existing position if direction changes
-        if self._position is not None:
-            if direction != self._position.direction or direction == 0:
-                self._close_position(bar, bar_idx, timestamp, "signal")
-                if direction == 0:
-                    return
+        if self._position is not None and (
+            direction != self._position.direction or direction == 0
+        ):
+            self._close_position(bar, bar_idx, timestamp, "signal")
+            if direction == 0:
+                return
 
         # Open new position
         if self._position is None and direction != 0:

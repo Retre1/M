@@ -47,7 +47,7 @@ class TestNoDoNothingCollapse:
         reward_fn.reset()
         rewards = []
 
-        for step in range(200):
+        for _step in range(200):
             reward_fn.set_step_context(
                 position=0.0,
                 unrealized_pnl=0.0,

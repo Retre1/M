@@ -31,7 +31,6 @@ import math
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from apexfx.models.config import GatingV2Config
 

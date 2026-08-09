@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 from dataclasses import dataclass
 from datetime import datetime
@@ -316,10 +317,7 @@ class MT5Client:
     def get_positions(self, symbol: str | None = None) -> list[Position]:
         """Get open positions."""
         self._ensure_connected()
-        if symbol:
-            positions = self._mt5.positions_get(symbol=symbol)
-        else:
-            positions = self._mt5.positions_get()
+        positions = self._mt5.positions_get(symbol=symbol) if symbol else self._mt5.positions_get()
 
         if positions is None:
             return []
@@ -377,10 +375,8 @@ class MT5Client:
             logger.warning("Order book fetch failed", symbol=symbol, error=str(e))
             return {"bids": [], "asks": []}
         finally:
-            try:
+            with contextlib.suppress(Exception):
                 self._mt5.market_book_release(symbol)
-            except Exception:
-                pass
 
     def close_position(self, ticket: int) -> TradeResult:
         """Close a position by ticket."""

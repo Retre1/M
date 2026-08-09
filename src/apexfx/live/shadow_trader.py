@@ -105,11 +105,8 @@ class ShadowTrader:
                 self.register_shadow(model_id)
 
             # Simulate position change
-            prev_pos = self._shadow_positions.get(model_id, 0.0)
-            if abs(action) < 0.05:
-                new_pos = 0.0
-            else:
-                new_pos = action  # Simplified: action IS the position
+            # Simplified: the action IS the position, with a dead zone at 0.05
+            new_pos = 0.0 if abs(action) < 0.05 else action
 
             self._shadow_positions[model_id] = new_pos
 

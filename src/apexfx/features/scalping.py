@@ -87,7 +87,6 @@ class ScalpingExtractor:
         dict[str, float]
             Dictionary with 10 feature values.
         """
-        n = len(bars)
         close = bars["close"].values
 
         # --- ATR (14-bar True Range on M1) ---
@@ -248,15 +247,15 @@ class ScalpingExtractor:
         if "high" not in bars.columns or "low" not in bars.columns:
             return 0.0
 
-        h = float(bars["high"].iloc[-1])
-        l = float(bars["low"].iloc[-1])
-        c = float(bars["close"].iloc[-1])
+        high = float(bars["high"].iloc[-1])
+        low = float(bars["low"].iloc[-1])
+        close = float(bars["close"].iloc[-1])
 
-        hl_range = h - l
+        hl_range = high - low
         if hl_range <= 0:
             return 0.0
 
-        return float((c - l) / hl_range * 2.0 - 1.0)
+        return float((close - low) / hl_range * 2.0 - 1.0)
 
     def _mean_reversion_zscore(self, close: np.ndarray) -> float:
         """Z-score of the latest close relative to rolling mean/std."""

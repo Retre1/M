@@ -25,9 +25,7 @@ from apexfx.config.schema import AppConfig, RLAlgorithm
 from apexfx.data.mtf_synthetic import resample_real_data
 from apexfx.env.forex_env import ForexTradingEnv
 from apexfx.env.mtf_forex_env import MTFForexTradingEnv
-from apexfx.env.reward import (
-    ProfitFocusedReward,
-)
+from apexfx.env.reward import TradingReward
 from apexfx.env.wrappers import MonitorWrapper, NormalizeReward, TradeFilterWrapper
 from apexfx.features.pipeline import FeaturePipeline
 from apexfx.features.selector import FeatureSelector
@@ -407,7 +405,7 @@ class Trainer:
 
         try:
             from apexfx.data.intermarket import IntermarketDataProvider
-            provider = IntermarketDataProvider()  # No MT5 in training — uses fallback
+            IntermarketDataProvider()  # No MT5 in training — uses fallback
 
             # Try loading cached intermarket data from Parquet
             from pathlib import Path

@@ -81,10 +81,7 @@ def _is_us_dst(d: date) -> bool:
 
 def _et_to_utc(dt: datetime) -> datetime:
     """Convert Eastern Time datetime to UTC."""
-    if _is_us_dst(dt.date()):
-        offset = _ET_OFFSET_DST
-    else:
-        offset = _ET_OFFSET_STANDARD
+    offset = _ET_OFFSET_DST if _is_us_dst(dt.date()) else _ET_OFFSET_STANDARD
     return (dt - offset).replace(tzinfo=UTC)
 
 
@@ -443,7 +440,7 @@ class CalendarFetcher:
             return None
 
         # Try various formats
-        for fmt in ("%b %d", "%b%d"):
+        for _fmt in ("%b %d", "%b%d"):
             try:
                 clean = " ".join(parts[-2:])  # Take last two parts (month + day)
                 parsed = datetime.strptime(clean, "%b %d")

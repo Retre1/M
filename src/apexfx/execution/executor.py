@@ -133,10 +133,7 @@ class Executor:
             )
 
         # Determine target direction
-        if abs(action) < 0.05:
-            target_direction = 0
-        else:
-            target_direction = 1 if action > 0 else -1
+        target_direction = 0 if abs(action) < 0.05 else 1 if action > 0 else -1
 
         # --- Close position if direction changes ---
         if current_direction != 0 and target_direction != current_direction:

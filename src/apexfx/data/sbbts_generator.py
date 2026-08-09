@@ -29,7 +29,7 @@ Design principles
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
@@ -123,17 +123,15 @@ class SBBTSGenerator:
         sigma_annual = sigma_per_step / np.sqrt(dt)
 
         # Higher moments
-        from scipy.stats import kurtosis as scipy_kurtosis, skew as scipy_skew
+        from scipy.stats import kurtosis as scipy_kurtosis
+        from scipy.stats import skew as scipy_skew
 
         kurt = float(scipy_kurtosis(log_returns, fisher=True, bias=False))
         skw = float(scipy_skew(log_returns, bias=False))
 
         # Autocorrelation of |returns| (proxy for vol clustering)
         abs_r = np.abs(log_returns)
-        if n > 2:
-            acf1 = float(np.corrcoef(abs_r[:-1], abs_r[1:])[0, 1])
-        else:
-            acf1 = 0.0
+        acf1 = float(np.corrcoef(abs_r[:-1], abs_r[1:])[0, 1]) if n > 2 else 0.0
 
         logger.info(
             "Calibrated SBBTS",

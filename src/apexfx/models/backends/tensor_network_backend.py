@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from apexfx.models.config import TensorNetworkBackendConfig
 
@@ -150,7 +149,7 @@ class TensorNetworkBackend(nn.Module):
         x = torch.cat([z, action], dim=-1)
         x = self.norm_in(self.input_proj(x))
 
-        for layer, norm in zip(self.layers, self.norms):
+        for layer, norm in zip(self.layers, self.norms, strict=False):
             x = x + self.dropout(layer(x))
             x = norm(x)
 

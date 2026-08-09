@@ -39,7 +39,7 @@ class SelectiveSSM(nn.Module):
         self.dt_proj = nn.Linear(dt_rank, d_inner, bias=True)
 
         # Initialise dt bias for stable discretisation
-        dt_init_std = dt_rank ** -0.5
+        dt_rank ** -0.5
         nn.init.uniform_(self.dt_proj.bias, math.log(dt_min), math.log(dt_max))
 
         # A parameter (diagonal, log-parameterised for stability)
@@ -58,7 +58,7 @@ class SelectiveSSM(nn.Module):
         Returns:
             (batch, d_inner) output.
         """
-        batch = x.shape[0]
+        x.shape[0]
 
         # Project to get dt, B, C (input-dependent)
         x_dbl = self.x_proj(x)
@@ -70,7 +70,7 @@ class SelectiveSSM(nn.Module):
 
         # Discretise: A_bar = exp(A * dt), B_bar = B * dt
         A = -torch.exp(self.A_log)  # (d_inner, d_state)
-        A_bar = torch.exp(A.unsqueeze(0) * dt.unsqueeze(-1))  # (batch, d_inner, d_state)
+        torch.exp(A.unsqueeze(0) * dt.unsqueeze(-1))  # (batch, d_inner, d_state)
         B_bar = B.unsqueeze(1) * dt.unsqueeze(-1)  # (batch, d_inner, d_state)
 
         # Single-step state update (no sequence dimension — used per-step in dynamics)

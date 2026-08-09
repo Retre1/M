@@ -108,7 +108,7 @@ class FeaturePipeline:
         ]
 
     @classmethod
-    def lightweight(cls, **kwargs: Any) -> "FeaturePipeline":
+    def lightweight(cls, **kwargs: Any) -> FeaturePipeline:
         """Create a pipeline without slow O(n²) extractors.
 
         Use for M5/M1 timeframes with 100K+ bars where
@@ -148,10 +148,7 @@ class FeaturePipeline:
         """Return True if *col* should bypass dim-reduction."""
         if col in _DIM_REDUCE_EXCLUDE:
             return True
-        for prefix in _DIM_REDUCE_EXCLUDE_PREFIXES:
-            if col.startswith(prefix):
-                return True
-        return False
+        return any(col.startswith(prefix) for prefix in _DIM_REDUCE_EXCLUDE_PREFIXES)
 
     # Standard OHLCV(T) columns that constitute raw bar data.
     _BAR_COLUMNS = frozenset([

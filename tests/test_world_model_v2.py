@@ -14,9 +14,12 @@ Tests verify:
 
 from __future__ import annotations
 
-import torch
 import pytest
+import torch
 
+from apexfx.models.backends.mamba_backend import MambaBackend
+from apexfx.models.backends.quantum_feature_map_backend import QuantumFeatureMapBackend
+from apexfx.models.backends.tensor_network_backend import TensorNetworkBackend
 from apexfx.models.config import (
     BackendType,
     GatingV2Config,
@@ -25,12 +28,8 @@ from apexfx.models.config import (
     TensorNetworkBackendConfig,
     WorldModelHybridConfig,
 )
-from apexfx.models.world_model import WorldModelHybrid
 from apexfx.models.gating_v2 import HiveMindGating_v2
-from apexfx.models.backends.mamba_backend import MambaBackend
-from apexfx.models.backends.tensor_network_backend import TensorNetworkBackend
-from apexfx.models.backends.quantum_feature_map_backend import QuantumFeatureMapBackend
-
+from apexfx.models.world_model import WorldModelHybrid
 
 D_LATENT = 16
 D_ACTION = 1
@@ -167,7 +166,8 @@ class TestWorldModelHybrid:
 
     def test_imagination_rollout(self, wm: WorldModelHybrid, features: torch.Tensor) -> None:
         z_start = wm.encode(features)
-        policy_fn = lambda z: torch.tanh(z[:, :D_ACTION])
+        def policy_fn(z):
+            return torch.tanh(z[:, :D_ACTION])
 
         result = wm.imagine(z_start, policy_fn, horizon=3)
 
@@ -186,7 +186,8 @@ class TestWorldModelHybrid:
         )
         wm = WorldModelHybrid(d_features=D_FEATURES, config=cfg)
         z_start = wm.encode(features)
-        policy_fn = lambda z: torch.zeros(z.shape[0], D_ACTION)
+        def policy_fn(z):
+            return torch.zeros(z.shape[0], D_ACTION)
 
         torch.manual_seed(1)
         r1 = wm.imagine(z_start, policy_fn, horizon=3, sbbts_noise_scale=0.1)

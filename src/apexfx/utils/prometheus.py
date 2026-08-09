@@ -46,7 +46,7 @@ class _Gauge:
     def set(self, value: float, **label_values: str) -> None:
         with self._lock:
             if label_values:
-                key = tuple(label_values.get(l, "") for l in self.labels)
+                key = tuple(label_values.get(name, "") for name in self.labels)
                 self._labeled_values[key] = value
             else:
                 self._value = value
@@ -61,7 +61,7 @@ class _Gauge:
             if self._labeled_values:
                 for label_vals, val in self._labeled_values.items():
                     label_str = ",".join(
-                        f'{l}="{v}"' for l, v in zip(self.labels, label_vals)
+                        f'{name}="{v}"' for name, v in zip(self.labels, label_vals, strict=False)
                     )
                     lines.append(f"{self.name}{{{label_str}}} {val}")
             else:

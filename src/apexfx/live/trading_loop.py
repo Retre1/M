@@ -343,7 +343,7 @@ class LiveTradingLoop:
 
     def _on_new_ticks(self, ticks: pd.DataFrame) -> None:
         """Process incoming ticks through bar aggregator."""
-        bars = self._bar_aggregator.process_ticks(ticks)
+        self._bar_aggregator.process_ticks(ticks)
         self._health.update_tick_time(datetime.now(UTC))
 
     def _on_bar_finalized(self, bar) -> None:
@@ -947,7 +947,6 @@ class LiveTradingLoop:
                         if result.promoted:
                             # Reload model in signal generator — track version for rollback
                             try:
-                                prev_signal_gen = self._signal_gen
                                 prev_model_path = getattr(self, "_current_model_path", None)
                                 self._signal_gen = SignalGenerator(
                                     result.model_path, device="cpu"

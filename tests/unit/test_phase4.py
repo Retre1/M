@@ -568,7 +568,7 @@ class TestShadowTrader:
         trader = ShadowTrader(evaluation_bars=100)
 
         rng = np.random.default_rng(42)
-        for i in range(60):
+        for _i in range(60):
             trader.on_bar(
                 live_action=float(rng.uniform(-0.5, 0.5)),
                 shadow_actions={"v2": float(rng.uniform(-0.5, 0.5))},

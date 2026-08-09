@@ -142,7 +142,7 @@ class FeatureSelector:
         # Extract importance (based on impurity reduction)
         raw_importance = model.feature_importances_
         self._importance_scores = {
-            col: float(imp) for col, imp in zip(feature_cols, raw_importance)
+            col: float(imp) for col, imp in zip(feature_cols, raw_importance, strict=False)
         }
 
         # Sort by importance descending

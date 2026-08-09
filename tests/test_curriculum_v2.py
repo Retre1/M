@@ -24,10 +24,7 @@ import pandas as pd
 import pytest
 
 from apexfx.training.config import (
-    AdaptiveLRConfig,
-    CheckpointStrategyConfig,
     CurriculumV2Config,
-    MultiMetricEarlyStopConfig,
     StageConfig,
 )
 from apexfx.training.curriculum_v2 import (
@@ -37,9 +34,7 @@ from apexfx.training.curriculum_v2 import (
     MultiCriteriaCheckpoint,
     MultiMetricEarlyStopping,
     StageDataV2,
-    StageMetrics,
 )
-
 
 # ── Fixtures ─────────────────────────────────────────────────────────
 

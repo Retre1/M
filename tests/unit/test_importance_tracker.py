@@ -202,7 +202,7 @@ class TestSaveLoad:
         tmp_path: Path,
     ) -> None:
         # Feed some data
-        for i in range(5):
+        for _i in range(5):
             tracker.update(torch.rand(10))
 
         save_path = tmp_path / "importance.json"

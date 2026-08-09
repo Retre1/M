@@ -23,7 +23,7 @@ References:
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
 
 import torch
 import torch.nn as nn
@@ -298,7 +298,6 @@ class WorldModelHybrid(nn.Module):
         dict with imagined latents, actions, rewards, dones, jump_risk.
         """
         H = horizon or self._cfg.imagination_horizon
-        device = z_start.device
 
         z = z_start
         latents = [z]
@@ -307,7 +306,7 @@ class WorldModelHybrid(nn.Module):
         dones_list: list[torch.Tensor] = []
         jump_risks: list[torch.Tensor] = []
 
-        for step in range(H):
+        for _step in range(H):
             with torch.no_grad():
                 a = policy_fn(z)
             z_next = self.predict_next(z, a)
@@ -485,7 +484,7 @@ class WorldModelCallback(BaseCallback):
 
         # Bootstrap ensemble training
         dynamics_loss = torch.tensor(0.0, device=z.device)
-        for i, dyn in enumerate(wm.dynamics):
+        for _i, dyn in enumerate(wm.dynamics):
             n = z.shape[0]
             idx = torch.randint(0, n, (int(n * 0.8),), device=z.device)
             z_boot = z[idx]

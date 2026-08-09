@@ -21,7 +21,6 @@ import math
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from apexfx.models.config import QuantumFeatureMapConfig
 
@@ -89,7 +88,7 @@ class QuantumCircuit(nn.Module):
                     control: int, target: int) -> torch.Tensor:
         """Apply CNOT gate (classical simulation via index swapping)."""
         n = self.n_qubits
-        batch = state.shape[0]
+        state.shape[0]
         d = self.d_state
 
         # Build CNOT permutation

@@ -117,7 +117,7 @@ class FeatureImportanceTracker:
                 # EMA: new = alpha * value + (1 - alpha) * old
                 self._ema = [
                     self._alpha * v + (1.0 - self._alpha) * old
-                    for v, old in zip(values, self._ema)
+                    for v, old in zip(values, self._ema, strict=False)
                 ]
 
             self._update_count += 1
@@ -164,7 +164,7 @@ class FeatureImportanceTracker:
         with self._lock:
             if self._ema is None:
                 return {}
-            return dict(zip(self._feature_names, self._ema))
+            return dict(zip(self._feature_names, self._ema, strict=False))
 
     def save(self, path: Path) -> None:
         """Serialize tracker state to JSON.

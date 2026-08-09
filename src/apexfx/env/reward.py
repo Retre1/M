@@ -365,9 +365,13 @@ class HoldAwareReward(BaseRewardFunction):
         churn_penalty = 0.0
         was_in_position = self._prev_position_direction != 0
         now_flat = self._position_direction == 0
-        if was_in_position and now_flat:
-            if self._prev_unrealized_pnl > 0 and self._time_in_position < self.min_hold_bars:
-                churn_penalty = self.churn_penalty
+        if (
+            was_in_position
+            and now_flat
+            and self._prev_unrealized_pnl > 0
+            and self._time_in_position < self.min_hold_bars
+        ):
+            churn_penalty = self.churn_penalty
 
         # Z-Score bonus (same as QuantumZScoreReward)
         quantum_bonus = 0.0

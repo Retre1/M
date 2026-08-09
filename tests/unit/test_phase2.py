@@ -156,7 +156,7 @@ class TestSumTree:
         from apexfx.training.per import SumTree
 
         tree = SumTree(capacity=5)
-        for i in range(10):
+        for _i in range(10):
             tree.add(1.0)
         assert tree.n_entries == 5
         assert abs(tree.total - 5.0) < 1e-6

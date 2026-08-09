@@ -248,7 +248,7 @@ class COTFetcher:
         path = Path(path)
 
         rows = []
-        for ccy, records in data.records.items():
+        for _ccy, records in data.records.items():
             for r in records:
                 rows.append({
                     "date": r.report_date.strftime("%Y-%m-%d"),

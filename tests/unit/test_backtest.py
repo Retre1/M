@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -60,7 +61,7 @@ class TestBacktestResult:
         r = BacktestResult()
         ts = datetime(2025, 1, 1, tzinfo=UTC)
         # 3 winners, 2 losers
-        for i, pnl in enumerate([100, 200, -50, 150, -30]):
+        for _i, pnl in enumerate([100, 200, -50, 150, -30]):
             r.record_trade(Trade(
                 entry_time=ts, exit_time=ts + timedelta(hours=1),
                 symbol="EURUSD", direction=1,
@@ -321,5 +322,3 @@ class TestWalkForward:
         for r in results:
             assert r.metrics["total_bars"] > 0
 
-
-from pathlib import Path

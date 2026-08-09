@@ -28,7 +28,6 @@ Usage::
 from __future__ import annotations
 
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from typing import Any
 
 import numpy as np
 import pandas as pd

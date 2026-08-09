@@ -105,10 +105,7 @@ class AdaptiveFeatureSelector:
         feature_names = self._tracker.feature_names
 
         # Build reference dict
-        if ref_snapshot is not None:
-            ref_importance = dict(zip(feature_names, ref_snapshot))
-        else:
-            ref_importance = {}
+        ref_importance = dict(zip(feature_names, ref_snapshot, strict=False)) if ref_snapshot is not None else {}
 
         # Compute drift scores and candidate lists
         drift_scores: dict[str, float] = {}
@@ -122,22 +119,22 @@ class AdaptiveFeatureSelector:
             ref_val = ref_importance.get(feat, current_val)
 
             # Drift = fractional change; positive means importance dropped
-            if ref_val > 0:
-                drift = (ref_val - current_val) / ref_val
-            else:
-                drift = 0.0
+            drift = (ref_val - current_val) / ref_val if ref_val > 0 else 0.0
             drift_scores[feat] = drift
 
             # --- Disable candidates ---
-            if feat in self._active_features and feat not in self._always_on:
-                # Importance dropped >50% AND current importance < min_importance
-                if drift > 0.5 and current_val < self._min_importance:
-                    candidates_disable.append(feat)
+            # Importance dropped >50% AND current importance < min_importance
+            if (
+                feat in self._active_features
+                and feat not in self._always_on
+                and drift > 0.5
+                and current_val < self._min_importance
+            ):
+                candidates_disable.append(feat)
 
             # --- Re-enable candidates ---
-            if feat in self._disabled_features:
-                if current_val > 2.0 * self._min_importance:
-                    candidates_enable.append(feat)
+            if feat in self._disabled_features and current_val > 2.0 * self._min_importance:
+                candidates_enable.append(feat)
 
         # Safety: cap disables per cycle
         max_disable_count = max(1, int(total_features * self._max_disable_pct))

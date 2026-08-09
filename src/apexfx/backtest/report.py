@@ -46,7 +46,6 @@ def generate_html_report(
     # Prepare data
     equity_data = _equity_json(result)
     drawdown_data = _drawdown_json(result)
-    monthly_data = _monthly_returns_json(result)
     trade_pnl_data = _trade_pnl_json(result)
     exit_reasons = _exit_reasons_json(result)
     rejection_data = _rejection_json(result)

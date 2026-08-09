@@ -24,6 +24,7 @@ Usage::
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 from typing import Any
 
@@ -54,6 +55,7 @@ def _make_env_thunk(
     """
     def _thunk() -> Any:
         from stable_baselines3.common.monitor import Monitor
+
         from apexfx.env.forex_env import ForexTradingEnv
 
         env = ForexTradingEnv(
@@ -62,11 +64,9 @@ def _make_env_thunk(
             reward_fn=reward_fn_factory(),
             max_drawdown_pct=0.15,
         )
-        try:
+        # Older gym API has no seed kwarg
+        with contextlib.suppress(TypeError):
             env.reset(seed=seed)
-        except TypeError:
-            # Older gym API without seed kwarg
-            pass
         return Monitor(env)
 
     return _thunk
@@ -239,12 +239,11 @@ class WorldModelV2Callback(BaseCallback):
 
     def _on_step(self) -> bool:
         # Log imagination metrics if world model callback is present
-        if self.num_timesteps % (self._imagination_freq * 100) == 0:
-            if self.logger:
-                self.logger.record(
-                    "world_model/imagination_freq",
-                    self._imagination_freq,
-                )
+        if self.num_timesteps % (self._imagination_freq * 100) == 0 and self.logger:
+            self.logger.record(
+                "world_model/imagination_freq",
+                self._imagination_freq,
+            )
         return True
 
 
@@ -381,7 +380,7 @@ class TrainerV2:
 
             # Stage completion
             stage_metrics = self._collect_stage_metrics()
-            sm = self._curriculum.on_stage_complete(stage_idx, stage_metrics)
+            self._curriculum.on_stage_complete(stage_idx, stage_metrics)
 
             # EWC consolidation between stages
             if self._curriculum_config.ewc_enabled and self._model is not None:
@@ -581,8 +580,8 @@ class TrainerV2:
         # World model callback
         if self._curriculum_config.world_model_enabled:
             try:
-                from apexfx.models.world_model import WorldModelCallback
                 from apexfx.models.config import WorldModelHybridConfig
+                from apexfx.models.world_model import WorldModelCallback
 
                 wm_config = WorldModelHybridConfig()
                 callbacks.append(WorldModelCallback(config=wm_config))
@@ -610,13 +609,25 @@ class TrainerV2:
             logger.warning("Could not load model for warm-start", error=str(e))
 
     def _consolidate_ewc(self, stage_idx: int) -> None:
-        """EWC Fisher consolidation after stage completion."""
-        try:
-            from apexfx.training.ewc import EWCRegularizer
-            # Simple consolidation: snapshot current params as important
-            logger.info("EWC consolidation", stage=stage_idx)
-        except ImportError:
-            pass
+        """Not implemented — no Fisher information is consolidated between stages.
+
+        This has always been a stub: it imported ``EWCRegularizer`` without
+        instantiating it and logged "EWC consolidation" at INFO, so the run logs
+        of runs 1-6 read as though EWC were active. It was not. Tuning
+        ``ewc_lambda`` between those runs (5000 -> 2000) therefore changed
+        nothing, and Run 5's conclusion that "EWC + adversarial ossified the
+        policy" can only be attributed to the adversarial stage.
+
+        Kept as an explicit warning rather than deleted so the curriculum's call
+        site stays visible until real consolidation lands.
+        """
+        if self._curriculum_config.ewc_enabled:
+            logger.warning(
+                "EWC consolidation requested but not implemented — no Fisher "
+                "information is retained between stages; ewc_lambda has no effect",
+                stage=stage_idx,
+                ewc_lambda=self._curriculum_config.ewc_lambda,
+            )
 
     def _collect_stage_metrics(self) -> dict[str, float]:
         """Collect final metrics for a completed stage.
