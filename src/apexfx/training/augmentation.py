@@ -63,7 +63,10 @@ class AugmentedObsWrapper(gym.Wrapper):
         self._prev_obs: dict[str, np.ndarray] | None = None
 
         # Infer lookback from market_features shape
-        if hasattr(env.observation_space, "spaces") and "market_features" in env.observation_space.spaces:
+        if (
+            hasattr(env.observation_space, "spaces")
+            and "market_features" in env.observation_space.spaces
+        ):
             mf_shape = env.observation_space["market_features"].shape
             self._lookback = mf_shape[0] if len(mf_shape) > 1 else None
         else:
@@ -140,7 +143,7 @@ class AugmentedObsWrapper(gym.Wrapper):
         n_knots = min(4, lookback // 2)
         knot_indices = np.linspace(0, lookback - 1, n_knots + 2)
         warp_offsets = self._rng.normal(0, sigma, n_knots + 2)
-        warp_offsets[0] = 0.0   # Fix start
+        warp_offsets[0] = 0.0  # Fix start
         warp_offsets[-1] = 0.0  # Fix end
         warped_knots = knot_indices + warp_offsets
 
@@ -227,7 +230,7 @@ class AugmentedObsWrapper(gym.Wrapper):
 
         result = np.zeros_like(data)
         # Place the sliced window at the end (most recent data)
-        result[lookback - keep_len:] = data[start:start + keep_len]
+        result[lookback - keep_len :] = data[start : start + keep_len]
 
         return result.flatten().astype(arr.dtype)
 

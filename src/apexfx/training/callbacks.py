@@ -214,8 +214,11 @@ class CurriculumCallback(BaseCallback):
             return True
 
         # Performance-based early advancement (after minimum steps)
-        if steps_in_stage >= self._min_steps_per_stage and len(self._episode_returns) >= self._eval_window:
-            recent = np.array(self._episode_returns[-self._eval_window:])
+        if (
+            steps_in_stage >= self._min_steps_per_stage
+            and len(self._episode_returns) >= self._eval_window
+        ):
+            recent = np.array(self._episode_returns[-self._eval_window :])
             mean_ret = np.mean(recent)
             std_ret = np.std(recent) + 1e-8
             rolling_sharpe = mean_ret / std_ret
@@ -479,10 +482,7 @@ class DiversityCallback(BaseCallback):
 
         # Gradient clipping for stability
         all_params = [
-            p
-            for pg in self._optimizer.param_groups
-            for p in pg["params"]
-            if p.grad is not None
+            p for pg in self._optimizer.param_groups for p in pg["params"] if p.grad is not None
         ]
         if all_params:
             torch.nn.utils.clip_grad_norm_(all_params, max_norm=1.0)

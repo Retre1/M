@@ -35,6 +35,7 @@ logger = get_logger(__name__)
 @dataclass
 class MarketState:
     """Current market state for risk evaluation."""
+
     current_price: float
     current_spread: float
     current_atr: float | None = None
@@ -45,6 +46,7 @@ class MarketState:
 @dataclass
 class RiskDecision:
     """Result of risk evaluation."""
+
     approved: bool
     adjusted_action: float
     position_size: float  # lots
@@ -57,8 +59,9 @@ class RiskDecision:
 @dataclass
 class DynamicStopConfig:
     """Dynamic stop-loss parameters based on regime and uncertainty."""
-    atr_mult: float            # ATR multiplier for stop distance
-    trailing: bool             # Use trailing stop (trends only)
+
+    atr_mult: float  # ATR multiplier for stop distance
+    trailing: bool  # Use trailing stop (trends only)
     stop_distance: float | None = None  # Absolute stop distance (atr_mult * ATR)
 
 
@@ -147,9 +150,7 @@ class KillSwitch:
         logger.error("KILL SWITCH ACTIVATED", reason=reason)
         try:
             self.KILL_FILE.parent.mkdir(parents=True, exist_ok=True)
-            self.KILL_FILE.write_text(
-                f"{datetime.now(UTC).isoformat()}: {reason}\n"
-            )
+            self.KILL_FILE.write_text(f"{datetime.now(UTC).isoformat()}: {reason}\n")
         except Exception as e:
             logger.error(
                 "CRITICAL: Kill file write failed — kill switch is memory-only",
@@ -159,9 +160,7 @@ class KillSwitch:
     def record_rejection(self) -> None:
         self._consecutive_rejections += 1
         if self._consecutive_rejections >= self._max_rejections:
-            self.activate(
-                f"Too many consecutive rejections ({self._consecutive_rejections})"
-            )
+            self.activate(f"Too many consecutive rejections ({self._consecutive_rejections})")
 
     def record_success(self) -> None:
         self._consecutive_rejections = 0
@@ -206,13 +205,13 @@ class VolatilityTargeter:
     def update(self, daily_return: float) -> None:
         self._returns.append(daily_return)
         if len(self._returns) > self._lookback * 2:
-            self._returns = self._returns[-self._lookback:]
+            self._returns = self._returns[-self._lookback :]
 
     def compute_leverage(self) -> float:
         """Compute leverage multiplier to achieve target volatility."""
         if len(self._returns) < max(20, self._lookback // 2):
             return 0.5  # conservative until enough data
-        recent = np.array(self._returns[-self._lookback:])
+        recent = np.array(self._returns[-self._lookback :])
         realized = np.std(recent, ddof=1) * np.sqrt(self._ann)
         if realized < 1e-6:
             return 1.0
@@ -272,10 +271,10 @@ class RegimeAdaptiveRisk:
 
     # Regime scaling factors: (max_position_scale, var_limit_scale)
     REGIME_PROFILES = {
-        "trending": (1.2, 1.0),       # Slightly larger positions in trends
+        "trending": (1.2, 1.0),  # Slightly larger positions in trends
         "mean_reverting": (1.0, 1.0),  # Normal
-        "volatile": (0.5, 0.5),        # Half position, half VaR limit
-        "flat": (0.7, 0.8),            # Reduced opportunity
+        "volatile": (0.5, 0.5),  # Half position, half VaR limit
+        "flat": (0.7, 0.8),  # Reduced opportunity
     }
 
     def __init__(self) -> None:
@@ -428,7 +427,9 @@ class RiskManager:
         self._symbol_returns[symbol].append(daily_return)
         # Truncate to lookback
         if len(self._symbol_returns[symbol]) > self._symbol_returns_lookback * 2:
-            self._symbol_returns[symbol] = self._symbol_returns[symbol][-self._symbol_returns_lookback:]
+            self._symbol_returns[symbol] = self._symbol_returns[symbol][
+                -self._symbol_returns_lookback :
+            ]
 
     def _compute_symbol_vol(self, symbol: str) -> float:
         """Compute realized daily volatility for a symbol.
@@ -436,6 +437,7 @@ class RiskManager:
         Returns config default if insufficient data.
         """
         import numpy as _np
+
         returns = self._symbol_returns.get(symbol, [])
         if len(returns) >= 10:
             return float(_np.std(returns, ddof=1))
@@ -513,9 +515,7 @@ class RiskManager:
 
         # --- Check 0c: Daily loss limit ---
         if self.daily_loss_guard.is_triggered:
-            checks_failed.append(
-                f"daily_loss_limit ({self.daily_loss_guard.daily_loss_pct:.2%})"
-            )
+            checks_failed.append(f"daily_loss_limit ({self.daily_loss_guard.daily_loss_pct:.2%})")
             return RiskDecision(
                 approved=False,
                 adjusted_action=0.0,
@@ -550,9 +550,7 @@ class RiskManager:
                 )
             elif filter_decision.scale < 1.0:
                 var_scale *= filter_decision.scale
-                checks_passed.append(
-                    f"strategy_filter_scaled ({filter_decision.scale:.2f})"
-                )
+                checks_passed.append(f"strategy_filter_scaled ({filter_decision.scale:.2f})")
             else:
                 checks_passed.append("strategy_filter_ok")
 
@@ -621,11 +619,7 @@ class RiskManager:
         # Σ_ij = VaR_i × VaR_j × ρ_ij, with dynamic correlations from
         # DynamicCorrelationTracker and realized per-symbol volatility.
         pvar_cfg = getattr(self._config, "portfolio_var", None)
-        if (
-            pvar_cfg
-            and pvar_cfg.multi_asset
-            and self._portfolio_positions
-        ):
+        if pvar_cfg and pvar_cfg.multi_asset and self._portfolio_positions:
             try:
                 import numpy as _np
                 from scipy import stats as _stats
@@ -642,6 +636,7 @@ class RiskManager:
                     corr_matrix = _np.eye(n)
                     try:
                         from apexfx.live.portfolio_manager import get_correlation_tracker
+
                         tracker = get_correlation_tracker()
                     except ImportError:
                         tracker = None
@@ -665,7 +660,9 @@ class RiskManager:
 
                     # 3. Compute portfolio VaR via variance-covariance
                     portfolio_var = self.var_calc.compute_portfolio_var(
-                        pos_dict, corr_matrix, ind_vars,
+                        pos_dict,
+                        corr_matrix,
+                        ind_vars,
                     )
 
                     pvar_limit = pvar_cfg.daily_limit * self._portfolio_value
@@ -682,7 +679,8 @@ class RiskManager:
                         pvar_scale = pvar_limit / (portfolio_var + 1e-10)
                         var_scale *= min(pvar_scale, 1.0)
                         checks_passed.append(
-                            f"portfolio_var_scaled (pVaR={portfolio_var:.0f}, limit={pvar_limit:.0f})"
+                            f"portfolio_var_scaled "
+                            f"(pVaR={portfolio_var:.0f}, limit={pvar_limit:.0f})"
                         )
                     else:
                         checks_passed.append("portfolio_var_ok")
@@ -715,10 +713,13 @@ class RiskManager:
         # --- Check 4e: Portfolio concentration (multi-symbol) ---
         if self._portfolio_positions:
             total_exposure = sum(abs(p.notional) for p in self._portfolio_positions)
-            exposure_ratio = total_exposure / self._portfolio_value if self._portfolio_value > 0 else 0.0
+            exposure_ratio = (
+                total_exposure / self._portfolio_value if self._portfolio_value > 0 else 0.0
+            )
             if exposure_ratio > self._portfolio_max_total_exposure:
                 checks_failed.append(
-                    f"portfolio_exposure ({exposure_ratio:.1%} > {self._portfolio_max_total_exposure:.1%})"
+                    f"portfolio_exposure ({exposure_ratio:.1%} > "
+                    f"{self._portfolio_max_total_exposure:.1%})"
                 )
                 return RiskDecision(
                     approved=False,
@@ -739,7 +740,9 @@ class RiskManager:
                 1.0 - self._uncertainty_weight * uncertainty_score,
             )
             var_scale *= unc_scale
-            checks_passed.append(f"uncertainty_scaled ({unc_scale:.2f}, score={uncertainty_score:.3f})")
+            checks_passed.append(
+                f"uncertainty_scaled ({unc_scale:.2f}, score={uncertainty_score:.3f})"
+            )
         else:
             checks_passed.append("uncertainty_n/a")
 
@@ -785,7 +788,9 @@ class RiskManager:
             adjusted_action=round(adjusted_action, 4),
             position_size=round(position_size, 4),
             var_scale=round(var_scale, 4),
-            uncertainty_score=round(uncertainty_score, 4) if uncertainty_score is not None else None,
+            uncertainty_score=round(uncertainty_score, 4)
+            if uncertainty_score is not None
+            else None,
             n_passed=len(checks_passed),
         )
 

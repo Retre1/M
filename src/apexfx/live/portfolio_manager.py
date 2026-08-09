@@ -66,13 +66,13 @@ class DynamicCorrelationTracker:
             self._returns[symbol] = []
         self._returns[symbol].append(bar_return)
         if len(self._returns[symbol]) > self._lookback * 2:
-            self._returns[symbol] = self._returns[symbol][-self._lookback:]
+            self._returns[symbol] = self._returns[symbol][-self._lookback :]
 
     def recompute(self) -> None:
         """Recompute all pairwise correlations from return history."""
         symbols = list(self._returns.keys())
         for i, sym_a in enumerate(symbols):
-            for sym_b in symbols[i + 1:]:
+            for sym_b in symbols[i + 1 :]:
                 r_a = self._returns[sym_a]
                 r_b = self._returns[sym_b]
                 n = min(len(r_a), len(r_b))
@@ -126,11 +126,12 @@ def get_correlation_tracker() -> DynamicCorrelationTracker:
 @dataclass
 class PositionInfo:
     """Snapshot of an open position."""
+
     symbol: str
-    direction: int          # +1 long, -1 short
-    volume: float           # lots
+    direction: int  # +1 long, -1 short
+    volume: float  # lots
     entry_price: float
-    notional: float         # direction * volume * contract_size * entry_price
+    notional: float  # direction * volume * contract_size * entry_price
     open_time: datetime = field(default_factory=lambda: datetime.now(UTC))
     unrealized_pnl: float = 0.0
 
@@ -138,18 +139,20 @@ class PositionInfo:
 @dataclass
 class PortfolioRiskResult:
     """Result of a portfolio-level trade check."""
+
     approved: bool
-    scale_factor: float = 1.0   # May reduce size if partially approved
+    scale_factor: float = 1.0  # May reduce size if partially approved
     reason: str = ""
 
 
 @dataclass
 class PortfolioMetrics:
     """Aggregate portfolio metrics."""
-    total_exposure: float       # Sum of abs(notional) / equity
+
+    total_exposure: float  # Sum of abs(notional) / equity
     n_positions: int
     per_symbol_exposure: dict[str, float]
-    max_correlation: float      # Max pairwise correlation among open positions
+    max_correlation: float  # Max pairwise correlation among open positions
     aggregate_equity: float
 
 
@@ -217,28 +220,34 @@ class PortfolioManager:
             room = max(0, self._max_total_exposure * self._equity - current_total)
             if room <= 0:
                 return PortfolioRiskResult(
-                    False, 0.0,
+                    False,
+                    0.0,
                     f"Total exposure {total_exposure:.1%} > limit {self._max_total_exposure:.1%}",
                 )
             scale = room / notional
             return PortfolioRiskResult(
-                True, scale,
+                True,
+                scale,
                 f"Total exposure scaled to {self._max_total_exposure:.1%}",
             )
 
         # 2. Per-symbol concentration check
-        existing_symbol_notional = abs(self._positions[symbol].notional) if symbol in self._positions else 0.0
+        existing_symbol_notional = (
+            abs(self._positions[symbol].notional) if symbol in self._positions else 0.0
+        )
         symbol_exposure = (existing_symbol_notional + notional) / self._equity
         if symbol_exposure > self._max_per_symbol:
             room = max(0, self._max_per_symbol * self._equity - existing_symbol_notional)
             if room <= 0:
                 return PortfolioRiskResult(
-                    False, 0.0,
+                    False,
+                    0.0,
                     f"{symbol} exposure {symbol_exposure:.1%} > limit {self._max_per_symbol:.1%}",
                 )
             scale = room / notional
             return PortfolioRiskResult(
-                True, scale,
+                True,
+                scale,
                 f"{symbol} exposure scaled to {self._max_per_symbol:.1%}",
             )
 
@@ -247,13 +256,14 @@ class PortfolioManager:
             if existing_sym == symbol:
                 continue
             corr = _get_correlation(symbol, existing_sym)
-            same_direction = (direction == existing_pos.direction)
+            same_direction = direction == existing_pos.direction
             # Correlated positions in same direction → concentrated risk
             # Anti-correlated positions in opposite direction → also concentrated
             effective_corr = corr if same_direction else -corr
             if effective_corr > self._correlation_limit:
                 return PortfolioRiskResult(
-                    False, 0.0,
+                    False,
+                    0.0,
                     f"Correlation {symbol}/{existing_sym} = {corr:.2f} "
                     f"(effective {effective_corr:.2f}) > limit {self._correlation_limit:.2f}",
                 )
@@ -313,7 +323,7 @@ class PortfolioManager:
         # Max pairwise correlation
         symbols = list(self._positions.keys())
         for i, sym_a in enumerate(symbols):
-            for sym_b in symbols[i + 1:]:
+            for sym_b in symbols[i + 1 :]:
                 corr = abs(_get_correlation(sym_a, sym_b))
                 max_corr = max(max_corr, corr)
 

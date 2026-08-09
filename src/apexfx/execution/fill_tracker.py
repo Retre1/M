@@ -16,6 +16,7 @@ logger = get_logger(__name__)
 @dataclass
 class FillRecord:
     """Record of a single order fill."""
+
     timestamp: datetime
     symbol: str
     direction: str
@@ -30,6 +31,7 @@ class FillRecord:
 @dataclass
 class ExecutionQuality:
     """Aggregated execution quality metrics."""
+
     avg_slippage_pips: float
     max_slippage_pips: float
     avg_fill_time_ms: float
@@ -113,7 +115,9 @@ class FillTracker:
         # Limit order improvement
         limit_fills = [f for f in self._fills if f.order_type == "limit"]
         if limit_fills:
-            improvements = [-f.slippage_pips for f in limit_fills]  # Negative slippage = improvement
+            improvements = [
+                -f.slippage_pips for f in limit_fills
+            ]  # Negative slippage = improvement
             limit_improvement = float(np.mean(improvements))
         else:
             limit_improvement = 0.0

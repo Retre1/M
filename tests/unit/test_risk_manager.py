@@ -356,7 +356,7 @@ class TestRiskManagerEvaluateAction:
         ms = _make_market_state()
         # Simulate a drawdown beyond the max (5%)
         rm.drawdown.update(100_000)  # Set peak
-        rm.drawdown.update(94_000)   # 6% drawdown → breached
+        rm.drawdown.update(94_000)  # 6% drawdown → breached
         assert rm.drawdown.is_breached
         decision = rm.evaluate_action(0.5, ms)
         assert not decision.approved
@@ -394,7 +394,9 @@ class TestForceCloseAll:
 
     def test_force_close_on_drawdown_breach(self):
         rm = RiskManager(config=_make_risk_config(), initial_balance=100_000.0)
-        with patch.object(type(rm.drawdown), "is_breached", new_callable=lambda: property(lambda self: True)):
+        with patch.object(
+            type(rm.drawdown), "is_breached", new_callable=lambda: property(lambda self: True)
+        ):
             assert rm.force_close_all() is True
 
     def test_force_close_on_kill_switch(self):
@@ -428,9 +430,7 @@ class TestDynamicStop:
 
     def test_trending_regime_uses_trailing(self):
         rm = RiskManager(config=_make_risk_config(), initial_balance=100_000.0)
-        stop = rm.compute_dynamic_stop(
-            uncertainty_score=0.0, regime="trending", current_atr=0.005
-        )
+        stop = rm.compute_dynamic_stop(uncertainty_score=0.0, regime="trending", current_atr=0.005)
         assert stop.trailing is True
         assert stop.stop_distance is not None
 

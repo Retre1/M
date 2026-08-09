@@ -20,6 +20,7 @@ import pytest
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_dict_obs(lookback: int = 20, n_features: int = 5) -> dict[str, np.ndarray]:
     """Create a minimal Dict observation matching ForexTradingEnv space."""
     rng = np.random.default_rng(42)
@@ -43,6 +44,7 @@ class TestPERConfig:
 
     def test_per_config_defaults(self):
         from apexfx.config.schema import PERConfig
+
         cfg = PERConfig()
         assert cfg.enabled is True
         assert cfg.alpha == 0.6
@@ -54,12 +56,14 @@ class TestPERConfig:
 
     def test_per_config_in_training_config(self):
         from apexfx.config.schema import TrainingConfig
+
         tc = TrainingConfig()
         assert hasattr(tc, "per")
         assert tc.per.enabled is True
 
     def test_per_config_disabled(self):
         from apexfx.config.schema import PERConfig
+
         cfg = PERConfig(enabled=False)
         assert cfg.enabled is False
 
@@ -74,6 +78,7 @@ class TestAugmentation:
 
     def test_augmentation_config_defaults(self):
         from apexfx.config.schema import AugmentationConfig
+
         cfg = AugmentationConfig()
         assert cfg.enabled is True
         assert cfg.time_warp_prob == 0.3
@@ -83,12 +88,14 @@ class TestAugmentation:
 
     def test_augmentation_config_in_training(self):
         from apexfx.config.schema import TrainingConfig
+
         tc = TrainingConfig()
         assert hasattr(tc, "augmentation")
         assert tc.augmentation.enabled is True
 
     def test_time_warp_preserves_shape(self):
         from apexfx.training.augmentation import AugmentedObsWrapper
+
         wrapper = AugmentedObsWrapper.__new__(AugmentedObsWrapper)
         wrapper._rng = np.random.default_rng(42)
         wrapper._lookback = 20
@@ -99,6 +106,7 @@ class TestAugmentation:
 
     def test_magnitude_warp_changes_values(self):
         from apexfx.training.augmentation import AugmentedObsWrapper
+
         wrapper = AugmentedObsWrapper.__new__(AugmentedObsWrapper)
         wrapper._rng = np.random.default_rng(42)
         wrapper._lookback = 20
@@ -110,6 +118,7 @@ class TestAugmentation:
 
     def test_window_slice_zeros_front(self):
         from apexfx.training.augmentation import AugmentedObsWrapper
+
         wrapper = AugmentedObsWrapper.__new__(AugmentedObsWrapper)
         wrapper._rng = np.random.default_rng(42)
         wrapper._lookback = 20
@@ -122,10 +131,14 @@ class TestAugmentation:
 
     def test_mixup_blending(self):
         from apexfx.training.augmentation import AugmentedObsWrapper
+
         wrapper = AugmentedObsWrapper.__new__(AugmentedObsWrapper)
         wrapper._rng = np.random.default_rng(42)
         obs1 = {"market_features": np.ones(10, dtype=np.float32), "position_state": np.array([1.0])}
-        obs2 = {"market_features": np.zeros(10, dtype=np.float32), "position_state": np.array([2.0])}
+        obs2 = {
+            "market_features": np.zeros(10, dtype=np.float32),
+            "position_state": np.array([2.0]),
+        }
         result = wrapper._mixup(obs1, obs2, alpha=0.2)
         # market_features should be blended
         assert np.all(result["market_features"] >= 0.0)
@@ -167,6 +180,7 @@ class TestPortfolioManager:
 
     def test_total_exposure_limit(self):
         from apexfx.live.portfolio_manager import PortfolioManager
+
         pm = PortfolioManager(max_total_exposure=0.40)
         pm.set_equity(100_000)
 
@@ -183,6 +197,7 @@ class TestPortfolioManager:
 
     def test_per_symbol_limit(self):
         from apexfx.live.portfolio_manager import PortfolioManager
+
         pm = PortfolioManager(max_per_symbol=0.25)
         pm.set_equity(100_000)
 
@@ -198,6 +213,7 @@ class TestPortfolioManager:
 
     def test_correlation_check(self):
         from apexfx.live.portfolio_manager import PortfolioManager
+
         pm = PortfolioManager(correlation_limit=0.70)
         pm.set_equity(100_000)
 
@@ -211,6 +227,7 @@ class TestPortfolioManager:
 
     def test_close_position(self):
         from apexfx.live.portfolio_manager import PortfolioManager
+
         pm = PortfolioManager()
         pm.set_equity(100_000)
         pm.update_position("EURUSD", 1, 0.1, 1.1000)
@@ -220,6 +237,7 @@ class TestPortfolioManager:
 
     def test_portfolio_metrics(self):
         from apexfx.live.portfolio_manager import PortfolioManager
+
         pm = PortfolioManager()
         pm.set_equity(100_000)
         pm.update_position("EURUSD", 1, 0.1, 1.1000)
@@ -235,6 +253,7 @@ class TestMultiSymbolLoop:
     def test_init_with_symbols(self):
         from apexfx.config.schema import AppConfig
         from apexfx.live.multi_symbol_loop import MultiSymbolTradingLoop
+
         config = AppConfig()
         loop = MultiSymbolTradingLoop(config, ["EURUSD", "GBPUSD"])
         assert loop.symbols == ["EURUSD", "GBPUSD"]
@@ -243,6 +262,7 @@ class TestMultiSymbolLoop:
     def test_shared_portfolio(self):
         from apexfx.config.schema import AppConfig
         from apexfx.live.multi_symbol_loop import MultiSymbolTradingLoop
+
         config = AppConfig()
         loop = MultiSymbolTradingLoop(config, ["EURUSD", "GBPUSD"])
         # Portfolio should be shared across symbols
@@ -273,6 +293,7 @@ class TestLiveOnlineLearner:
     def test_buffer_recording(self):
         from apexfx.config.schema import OnlineLearningConfig
         from apexfx.live.online_learner import LiveOnlineLearner
+
         cfg = OnlineLearningConfig(enabled=True, mini_buffer_size=100)
         model = self._make_mock_model()
         learner = LiveOnlineLearner(model, cfg)
@@ -284,6 +305,7 @@ class TestLiveOnlineLearner:
     def test_trade_result_tracking(self):
         from apexfx.config.schema import OnlineLearningConfig
         from apexfx.live.online_learner import LiveOnlineLearner
+
         cfg = OnlineLearningConfig(enabled=True)
         model = self._make_mock_model()
         learner = LiveOnlineLearner(model, cfg)
@@ -296,6 +318,7 @@ class TestLiveOnlineLearner:
     def test_drift_detection_negative_sharpe(self):
         from apexfx.config.schema import OnlineLearningConfig
         from apexfx.live.online_learner import LiveOnlineLearner
+
         cfg = OnlineLearningConfig(
             enabled=True,
             drift_detection_window=30,
@@ -314,6 +337,7 @@ class TestLiveOnlineLearner:
     def test_no_drift_with_positive_returns(self):
         from apexfx.config.schema import OnlineLearningConfig
         from apexfx.live.online_learner import LiveOnlineLearner
+
         cfg = OnlineLearningConfig(
             enabled=True,
             drift_detection_window=30,
@@ -330,6 +354,7 @@ class TestLiveOnlineLearner:
     def test_rollback(self):
         from apexfx.config.schema import OnlineLearningConfig
         from apexfx.live.online_learner import LiveOnlineLearner
+
         cfg = OnlineLearningConfig(enabled=True, max_rollback_checkpoints=3)
         model = self._make_mock_model()
         learner = LiveOnlineLearner(model, cfg)
@@ -356,6 +381,7 @@ class TestRegimeExecution:
 
     def test_trading_signal_has_uncertainty_fields(self):
         from apexfx.live.signal_generator import TradingSignal
+
         signal = TradingSignal(
             action=0.5,
             confidence=0.5,
@@ -376,6 +402,7 @@ class TestRegimeExecution:
 
     def test_dynamic_stop_config(self):
         from apexfx.risk.risk_manager import DynamicStopConfig
+
         stop = DynamicStopConfig(atr_mult=2.5, trailing=True, stop_distance=0.005)
         assert stop.atr_mult == 2.5
         assert stop.trailing is True
@@ -384,6 +411,7 @@ class TestRegimeExecution:
     def test_compute_dynamic_stop_trending(self):
         from apexfx.config.schema import RiskConfig
         from apexfx.risk.risk_manager import RiskManager
+
         rm = RiskManager(RiskConfig())
         stop = rm.compute_dynamic_stop(0.0, "trending", 0.001)
         # Trending base = 2.0, uncertainty=0 → mult=2.0
@@ -394,6 +422,7 @@ class TestRegimeExecution:
     def test_compute_dynamic_stop_volatile_high_uncertainty(self):
         from apexfx.config.schema import RiskConfig
         from apexfx.risk.risk_manager import RiskManager
+
         rm = RiskManager(RiskConfig())
         stop = rm.compute_dynamic_stop(0.8, "volatile", 0.002)
         # Volatile base = 4.0, uncertainty=0.8 → mult = 4.0 * 1.4 = 5.6
@@ -403,6 +432,7 @@ class TestRegimeExecution:
     def test_regime_transition_major(self):
         """trending → mean_reverting should be a major transition."""
         from apexfx.live.trading_loop import LiveTradingLoop
+
         assert LiveTradingLoop._is_major_transition("trending", "mean_reverting") is True
         assert LiveTradingLoop._is_major_transition("trending", "volatile") is True
         assert LiveTradingLoop._is_major_transition("mean_reverting", "volatile") is True
@@ -410,6 +440,7 @@ class TestRegimeExecution:
     def test_regime_transition_minor(self):
         """trending → flat should be a minor transition."""
         from apexfx.live.trading_loop import LiveTradingLoop
+
         assert LiveTradingLoop._is_major_transition("trending", "flat") is False
         assert LiveTradingLoop._is_major_transition("mean_reverting", "flat") is False
 
@@ -417,6 +448,7 @@ class TestRegimeExecution:
         """Risk manager should accept and use uncertainty_score."""
         from apexfx.config.schema import RiskConfig
         from apexfx.risk.risk_manager import MarketState, RiskManager
+
         rm = RiskManager(RiskConfig(), initial_balance=100_000)
         rm.update_portfolio(100_000)
 
@@ -437,6 +469,7 @@ class TestRegimeExecution:
     def test_set_portfolio_context(self):
         from apexfx.config.schema import RiskConfig
         from apexfx.risk.risk_manager import RiskManager
+
         rm = RiskManager(RiskConfig())
         # Should not raise
         rm.set_portfolio_context([])
@@ -445,15 +478,18 @@ class TestRegimeExecution:
     def test_executor_close_all(self):
         """Executor should have public close_all method."""
         from apexfx.execution.executor import Executor
+
         assert hasattr(Executor, "close_all")
 
     def test_executor_reduce_position(self):
         """Executor should have public reduce_position method."""
         from apexfx.execution.executor import Executor
+
         assert hasattr(Executor, "reduce_position")
 
     def test_stop_mult_computation(self):
         from apexfx.live.signal_generator import SignalGenerator
+
         # Low uncertainty + trending → tight stop
         mult_trend = SignalGenerator._compute_stop_mult(0.0, "trending")
         assert mult_trend == pytest.approx(1.5)

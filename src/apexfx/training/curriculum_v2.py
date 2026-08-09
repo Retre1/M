@@ -41,14 +41,15 @@ logger = get_logger(__name__)
 
 # ── Data containers ──────────────────────────────────────────────────
 
+
 @dataclass
 class StageDataV2:
     """Container for a curriculum stage's blended training data."""
 
     stage_cfg: StageConfig
     stage_idx: int
-    data: pd.DataFrame                # blended real + synthetic
-    real_data: pd.DataFrame            # pure real subset
+    data: pd.DataFrame  # blended real + synthetic
+    real_data: pd.DataFrame  # pure real subset
     synthetic_data: pd.DataFrame | None = None
     fsd_features: np.ndarray | None = None  # (n_bars, 4) if FSD enabled
     metadata: dict = field(default_factory=dict)
@@ -73,6 +74,7 @@ class StageMetrics:
 
 
 # ── Checkpoint tracker ───────────────────────────────────────────────
+
 
 class MultiCriteriaCheckpoint:
     """Tracks best checkpoints across multiple metrics.
@@ -151,6 +153,7 @@ class MultiCriteriaCheckpoint:
 
 
 # ── Adaptive LR controller ──────────────────────────────────────────
+
 
 class AdaptiveLRController:
     """Entropy-based learning rate adjustment.
@@ -238,6 +241,7 @@ class AdaptiveLRController:
 
 # ── Multi-metric early stopping ─────────────────────────────────────
 
+
 class MultiMetricEarlyStopping:
     """Early stopping that monitors multiple metrics simultaneously.
 
@@ -280,9 +284,7 @@ class MultiMetricEarlyStopping:
                 self._no_improve_count[key] += 1
 
         # Stop only if ALL metrics stalled
-        all_stalled = all(
-            c >= self._patience for c in self._no_improve_count.values()
-        )
+        all_stalled = all(c >= self._patience for c in self._no_improve_count.values())
 
         if all_stalled:
             logger.warning(
@@ -300,6 +302,7 @@ class MultiMetricEarlyStopping:
 
 
 # ── Data blender ─────────────────────────────────────────────────────
+
 
 class DataBlender:
     """Blend real and SBBTS synthetic data according to stage ratios.
@@ -332,14 +335,17 @@ class DataBlender:
         filtered_real = real_data.copy()
         if stage_cfg.filter_quantile is not None:
             filtered_real = self._filter_extreme_bars(
-                filtered_real, stage_cfg.filter_quantile,
+                filtered_real,
+                stage_cfg.filter_quantile,
             )
 
         n_real_target = int(len(filtered_real) * stage_cfg.real_ratio)
         if n_real_target < len(filtered_real):
             # Subsample real data to match ratio
             idx = self._rng.choice(
-                len(filtered_real), size=n_real_target, replace=False,
+                len(filtered_real),
+                size=n_real_target,
+                replace=False,
             )
             idx.sort()
             real_subset = filtered_real.iloc[idx].reset_index(drop=True)
@@ -349,15 +355,20 @@ class DataBlender:
         # 2. Generate synthetic data if needed
         synthetic_data = None
         if stage_cfg.sbbts_ratio > 0:
-            n_synth = int(len(real_subset) * stage_cfg.sbbts_ratio / max(stage_cfg.real_ratio, 0.01))
+            n_synth = int(
+                len(real_subset) * stage_cfg.sbbts_ratio / max(stage_cfg.real_ratio, 0.01)
+            )
             synthetic_data = self._generate_sbbts(
-                real_data, n_synth, stage_cfg,
+                real_data,
+                n_synth,
+                stage_cfg,
             )
 
         # 3. Blend
         if synthetic_data is not None and len(synthetic_data) > 0:
             blended = pd.concat(
-                [real_subset, synthetic_data], ignore_index=True,
+                [real_subset, synthetic_data],
+                ignore_index=True,
             ).sort_values("time" if "time" in real_subset.columns else real_subset.columns[0])
             blended = blended.reset_index(drop=True)
         else:
@@ -400,7 +411,9 @@ class DataBlender:
         )
 
     def _filter_extreme_bars(
-        self, data: pd.DataFrame, quantile: float,
+        self,
+        data: pd.DataFrame,
+        quantile: float,
     ) -> pd.DataFrame:
         """Remove bars with extreme returns."""
         if "close" not in data.columns:
@@ -431,6 +444,7 @@ class DataBlender:
         """
         try:
             from apexfx.data.sbbts_generator import SBBTSGenerator
+
             generator = SBBTSGenerator()
 
             # Calibrate from real data (expects DataFrame with 'close' column)
@@ -477,7 +491,9 @@ class DataBlender:
         return augmented
 
     def _fallback_synthetic(
-        self, real_data: pd.DataFrame, n_steps: int,
+        self,
+        real_data: pd.DataFrame,
+        n_steps: int,
     ) -> pd.DataFrame:
         """Simple noise-augmented copy of real data as fallback."""
         if len(real_data) == 0:
@@ -530,6 +546,7 @@ class DataBlender:
 
 
 # ── CurriculumV2 orchestrator ───────────────────────────────────────
+
 
 class CurriculumV2:
     """4-stage progressive curriculum training orchestrator.
@@ -630,9 +647,7 @@ class CurriculumV2:
         if self._real_data is None or len(self._real_data) == 0:
             raise ValueError("Real data is required for CurriculumV2 training.")
         if stage_idx >= self.n_stages:
-            raise ValueError(
-                f"Stage {stage_idx} does not exist (max {self.n_stages - 1})."
-            )
+            raise ValueError(f"Stage {stage_idx} does not exist (max {self.n_stages - 1}).")
 
         stage_cfg = self.config.stages[stage_idx]
         logger.info(
@@ -690,7 +705,10 @@ class CurriculumV2:
 
         # Multi-criteria checkpoint
         improved = self.checkpoint_tracker.maybe_save(
-            model, metrics, stage_idx, step,
+            model,
+            metrics,
+            stage_idx,
+            step,
         )
         result["improved_criteria"] = improved
 

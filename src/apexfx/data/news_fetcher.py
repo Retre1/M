@@ -106,7 +106,9 @@ class NewsFetcher:
 
                 # Guard against oversized responses
                 if len(resp.content) > _MAX_RSS_BYTES:
-                    logger.warning("RSS response too large, skipping", feed=feed_url, size=len(resp.content))
+                    logger.warning(
+                        "RSS response too large, skipping", feed=feed_url, size=len(resp.content)
+                    )
                     continue
                 headlines = self._parse_rss(resp.text, feed_url)
                 all_headlines.extend(headlines)
@@ -160,16 +162,19 @@ class NewsFetcher:
             if pub_date is not None and pub_date.text:
                 try:
                     from email.utils import parsedate_to_datetime
+
                     dt = parsedate_to_datetime(pub_date.text)
                     timestamp = dt.isoformat()
                 except Exception:
                     pass
 
-            headlines.append({
-                "text": title,
-                "timestamp": timestamp,
-                "source": source,
-            })
+            headlines.append(
+                {
+                    "text": title,
+                    "timestamp": timestamp,
+                    "source": source,
+                }
+            )
 
         return headlines
 
@@ -187,11 +192,13 @@ class NewsFetcher:
             title = re.sub(r"<[^>]+>", "", title)
             if not title or len(title) > 500:
                 continue
-            headlines.append({
-                "text": title,
-                "timestamp": datetime.now(UTC).isoformat(),
-                "source": source,
-            })
+            headlines.append(
+                {
+                    "text": title,
+                    "timestamp": datetime.now(UTC).isoformat(),
+                    "source": source,
+                }
+            )
         return headlines
 
     @staticmethod

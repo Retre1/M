@@ -105,7 +105,9 @@ class AdaptiveFeatureSelector:
         feature_names = self._tracker.feature_names
 
         # Build reference dict
-        ref_importance = dict(zip(feature_names, ref_snapshot, strict=False)) if ref_snapshot is not None else {}
+        ref_importance = (
+            dict(zip(feature_names, ref_snapshot, strict=False)) if ref_snapshot is not None else {}
+        )
 
         # Compute drift scores and candidate lists
         drift_scores: dict[str, float] = {}
@@ -187,9 +189,7 @@ class AdaptiveFeatureSelector:
     def force_disable(self, feature: str) -> None:
         """Manually disable a feature (respects always_on)."""
         if feature in self._always_on:
-            logger.warning(
-                "Cannot force-disable always_on feature", feature=feature
-            )
+            logger.warning("Cannot force-disable always_on feature", feature=feature)
             return
         self._active_features.discard(feature)
         self._disabled_features.add(feature)

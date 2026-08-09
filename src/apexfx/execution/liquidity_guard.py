@@ -16,6 +16,7 @@ logger = get_logger(__name__)
 @dataclass
 class LiquidityStatus:
     """Result of liquidity check."""
+
     tradeable: bool
     current_spread: float
     spread_limit: float
@@ -70,14 +71,13 @@ class LiquidityGuard:
         if self._config.session_filter.enabled:
             active_sessions = get_active_sessions(now.hour)
             allowed = self._config.session_filter.allowed_sessions
-            session_active = any(
-                s.value in allowed for s in active_sessions
-            )
+            session_active = any(s.value in allowed for s in active_sessions)
             if not session_active:
                 return LiquidityStatus(
                     tradeable=False,
                     current_spread=0,
-                    spread_limit=self._symbol_config.spread_limit_pips * self._symbol_config.pip_value,
+                    spread_limit=self._symbol_config.spread_limit_pips
+                    * self._symbol_config.pip_value,
                     session_active=False,
                     market_open=True,
                     reason=f"Outside allowed sessions: {[s.value for s in active_sessions]}",
@@ -90,7 +90,8 @@ class LiquidityGuard:
                     return LiquidityStatus(
                         tradeable=False,
                         current_spread=0,
-                        spread_limit=self._symbol_config.spread_limit_pips * self._symbol_config.pip_value,
+                        spread_limit=self._symbol_config.spread_limit_pips
+                        * self._symbol_config.pip_value,
                         session_active=session_active,
                         market_open=True,
                         reason="News blackout active",
@@ -103,7 +104,7 @@ class LiquidityGuard:
         if self._mt5 is not None:
             try:
                 info = self._mt5.get_symbol_info(symbol)
-                current_spread = (info.ask - info.bid)
+                current_spread = info.ask - info.bid
             except Exception as e:
                 logger.warning("Failed to get spread", error=str(e))
                 # If we can't check spread, be conservative
@@ -123,8 +124,9 @@ class LiquidityGuard:
                 spread_limit=spread_limit_price,
                 session_active=session_active,
                 market_open=True,
-                reason=f"Spread too wide: {current_spread / self._symbol_config.pip_value:.1f} pips "
-                       f"(limit: {self._symbol_config.spread_limit_pips} pips)",
+                reason=f"Spread too wide: "
+                       f"{current_spread / self._symbol_config.pip_value:.1f} pips "
+                f"(limit: {self._symbol_config.spread_limit_pips} pips)",
             )
 
         return LiquidityStatus(

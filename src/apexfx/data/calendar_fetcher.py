@@ -492,7 +492,9 @@ class CalendarFetcher:
 
             for event in events:
                 # Filter to requested range
-                event_date = event.time_utc.date() if hasattr(event.time_utc, "date") else event.time_utc
+                event_date = (
+                    event.time_utc.date() if hasattr(event.time_utc, "date") else event.time_utc
+                )
                 if isinstance(event_date, datetime):
                     event_date = event_date.date()
                 if event_date < start or event_date > end:
@@ -533,17 +535,19 @@ class CalendarFetcher:
 
         records = []
         for event in events:
-            records.append({
-                "datetime_utc": event.time_utc.strftime("%Y-%m-%d %H:%M:%S%z")
-                if event.time_utc.tzinfo
-                else event.time_utc.strftime("%Y-%m-%d %H:%M:%S"),
-                "currency": event.currency,
-                "event_name": event.name,
-                "impact": event.impact,
-                "actual": event.actual if event.actual is not None else "",
-                "forecast": event.forecast if event.forecast is not None else "",
-                "previous": event.previous if event.previous is not None else "",
-            })
+            records.append(
+                {
+                    "datetime_utc": event.time_utc.strftime("%Y-%m-%d %H:%M:%S%z")
+                    if event.time_utc.tzinfo
+                    else event.time_utc.strftime("%Y-%m-%d %H:%M:%S"),
+                    "currency": event.currency,
+                    "event_name": event.name,
+                    "impact": event.impact,
+                    "actual": event.actual if event.actual is not None else "",
+                    "forecast": event.forecast if event.forecast is not None else "",
+                    "previous": event.previous if event.previous is not None else "",
+                }
+            )
 
         df = pd.DataFrame(records)
         df.to_csv(path, index=False)

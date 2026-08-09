@@ -90,8 +90,13 @@ class Trainer:
 
         # Determine number of parallel environments
         n_cpus = mp.cpu_count() or 4
-        self._n_envs = perf_cfg.n_envs if perf_cfg.n_envs > 0 else get_optimal_n_envs(
-            n_cpus, torch.cuda.device_count() if torch.cuda.is_available() else 0,
+        self._n_envs = (
+            perf_cfg.n_envs
+            if perf_cfg.n_envs > 0
+            else get_optimal_n_envs(
+                n_cpus,
+                torch.cuda.device_count() if torch.cuda.is_available() else 0,
+            )
         )
         logger.info(
             "Parallel environments configured",
@@ -132,7 +137,9 @@ class Trainer:
         # 1. Restore EWC
         if state.ewc_state is not None and self._ewc_reg is not None:
             self._ewc_reg.load_state_dict(state.ewc_state)
-            logger.info("EWC state restored", n_consolidations=state.ewc_state.get("n_consolidations", 0))
+            logger.info(
+                "EWC state restored", n_consolidations=state.ewc_state.get("n_consolidations", 0)
+            )
 
         # 2. Restore feature selector
         if state.feature_selector_state is not None:
@@ -375,9 +382,7 @@ class Trainer:
 
         data = {
             "n_folds": len(results.folds),
-            "aggregate_metrics": {
-                k: float(v) for k, v in results.aggregate_metrics.items()
-            },
+            "aggregate_metrics": {k: float(v) for k, v in results.aggregate_metrics.items()},
             "folds": [
                 {
                     "fold_idx": f.fold_idx,
@@ -405,10 +410,12 @@ class Trainer:
 
         try:
             from apexfx.data.intermarket import IntermarketDataProvider
+
             IntermarketDataProvider()  # No MT5 in training — uses fallback
 
             # Try loading cached intermarket data from Parquet
             from pathlib import Path
+
             data_dir = Path(self._config.base.paths.data_dir) / "processed"
 
             merged = bars.copy()
@@ -483,7 +490,9 @@ class Trainer:
             progress_bar=True,
         )
 
-    def _train_mtf_stage(self, stage_data: MTFStageData, *, override_timesteps: int | None = None) -> None:
+    def _train_mtf_stage(
+        self, stage_data: MTFStageData, *, override_timesteps: int | None = None
+    ) -> None:
         """Train a multi-timeframe stage."""
         timesteps = override_timesteps or stage_data.stage.total_timesteps
 
@@ -575,6 +584,7 @@ class Trainer:
 
         def make_env_fn(rank: int):
             """Factory that captures rank for seed diversification."""
+
             def _init():
                 env = ForexTradingEnv(
                     data=data,
@@ -607,7 +617,8 @@ class Trainer:
                 # Action smoothing: EMA for smoother trading
                 if tc_cfg.enabled and tc_cfg.action_smoothing_alpha < 1.0:
                     env = ActionSmoothingWrapper(
-                        env, alpha=tc_cfg.action_smoothing_alpha,
+                        env,
+                        alpha=tc_cfg.action_smoothing_alpha,
                     )
 
                 # Adversarial noise: robustness against distribution shift
@@ -624,11 +635,13 @@ class Trainer:
                 # Data augmentation: time warp, magnitude warp, window slice, mixup
                 if aug_cfg.enabled:
                     from apexfx.training.augmentation import AugmentedObsWrapper
+
                     env = AugmentedObsWrapper(env, aug_cfg)
 
                 env = MonitorWrapper(env)
                 env = NormalizeReward(env)
                 return env
+
             return _init
 
         env_fns = [make_env_fn(i) for i in range(n_envs)]
@@ -743,9 +756,7 @@ class Trainer:
         # Cosine LR schedule: decays from initial LR to near-zero
         lr = rl_cfg.learning_rate
         if rl_cfg.use_cosine_lr:
-            total_steps = sum(
-                s.total_timesteps for s in self._config.training.curriculum.stages
-            )
+            total_steps = sum(s.total_timesteps for s in self._config.training.curriculum.stages)
             lr = self._cosine_lr_schedule(rl_cfg.learning_rate, total_steps)
 
         policy_kwargs = {
@@ -844,9 +855,11 @@ class Trainer:
     @staticmethod
     def _cosine_lr_schedule(initial_lr: float, total_timesteps: int):
         """Cosine annealing LR schedule (returns callable for SB3)."""
+
         def schedule(progress_remaining: float) -> float:
             # progress_remaining goes from 1.0 → 0.0
             return initial_lr * (0.5 * (1.0 + np.cos(np.pi * (1.0 - progress_remaining))))
+
         return schedule
 
     def _build_mtf_env(
@@ -893,7 +906,8 @@ class Trainer:
 
                 if tc_cfg.enabled and tc_cfg.action_smoothing_alpha < 1.0:
                     env = ActionSmoothingWrapper(
-                        env, alpha=tc_cfg.action_smoothing_alpha,
+                        env,
+                        alpha=tc_cfg.action_smoothing_alpha,
                     )
 
                 if adv_cfg.enabled:
@@ -909,11 +923,13 @@ class Trainer:
                 # Data augmentation: time warp, magnitude warp, window slice, mixup
                 if aug_cfg.enabled:
                     from apexfx.training.augmentation import AugmentedObsWrapper
+
                     env = AugmentedObsWrapper(env, aug_cfg)
 
                 env = MonitorWrapper(env)
                 env = NormalizeReward(env)
                 return env
+
             return _init
 
         env_fns = [make_env_fn(i) for i in range(n_envs)]
@@ -938,9 +954,7 @@ class Trainer:
 
         lr = rl_cfg.learning_rate
         if rl_cfg.use_cosine_lr:
-            total_steps = sum(
-                s.total_timesteps for s in self._config.training.curriculum.stages
-            )
+            total_steps = sum(s.total_timesteps for s in self._config.training.curriculum.stages)
             lr = self._cosine_lr_schedule(rl_cfg.learning_rate, total_steps)
 
         policy_kwargs = {
@@ -1260,7 +1274,13 @@ class Trainer:
                 if abs(position) > 0 and abs(prev_position) == 0:
                     trades.append({"step": step_count, "type": "open", "position": float(position)})
                 elif abs(position) == 0 and abs(prev_position) > 0:
-                    trades.append({"step": step_count, "type": "close", "pnl": float(current_value - prev_value)})
+                    trades.append(
+                        {
+                            "step": step_count,
+                            "type": "close",
+                            "pnl": float(current_value - prev_value),
+                        }
+                    )
 
                 equity.append(current_value)
                 prev_value = current_value
@@ -1277,7 +1297,7 @@ class Trainer:
             # Max drawdown from equity curve
             eq_arr = np.array(equity)
             peak = np.maximum.accumulate(eq_arr)
-            dd_pct = ((peak - eq_arr) / peak * 100)
+            dd_pct = (peak - eq_arr) / peak * 100
             max_dd_pct = float(np.max(dd_pct)) if len(dd_pct) > 0 else 0.0
 
             n_trades = len([t for t in trades if t["type"] == "open"])
@@ -1324,6 +1344,7 @@ class Trainer:
         except Exception as e:
             logger.error("Backtest failed (training succeeded though)", error=str(e))
             import traceback
+
             traceback.print_exc()
 
     @property

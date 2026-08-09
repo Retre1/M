@@ -52,6 +52,7 @@ class IntermarketDataProvider:
         """Default data directory from config or fallback."""
         try:
             from apexfx.config.schema import AppConfig
+
             cfg = AppConfig()
             return Path(cfg.base.paths.data_dir) / "processed"
         except Exception:
@@ -196,9 +197,7 @@ class IntermarketDataProvider:
         try:
             df = pd.read_parquet(parquet_path)
             if "close" in df.columns and "time" in df.columns:
-                df = df[["time", "close"]].rename(
-                    columns={"close": f"{instrument}_close"}
-                )
+                df = df[["time", "close"]].rename(columns={"close": f"{instrument}_close"})
                 logger.debug(
                     "Loaded intermarket from Parquet cache",
                     instrument=instrument,
@@ -252,10 +251,14 @@ class IntermarketDataProvider:
                 return None
 
             # Normalize to our format
-            df = pd.DataFrame({
-                "time": data.index.tz_localize(UTC) if data.index.tz is None else data.index.tz_convert(UTC),
-                f"{instrument}_close": data["Close"].values.flatten(),
-            })
+            df = pd.DataFrame(
+                {
+                    "time": data.index.tz_localize(UTC)
+                    if data.index.tz is None
+                    else data.index.tz_convert(UTC),
+                    f"{instrument}_close": data["Close"].values.flatten(),
+                }
+            )
             df["time"] = pd.to_datetime(df["time"]).dt.tz_localize(None)
 
             # Cache to Parquet for next time

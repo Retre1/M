@@ -27,19 +27,22 @@ import pytest
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_bars(n: int = 200) -> pd.DataFrame:
     """Create synthetic OHLCV bar data for testing."""
     rng = np.random.default_rng(42)
     close = 1.1000 + np.cumsum(rng.normal(0, 0.001, n))
-    return pd.DataFrame({
-        "time": pd.date_range("2024-01-01", periods=n, freq="h"),
-        "open": close - rng.uniform(0, 0.001, n),
-        "high": close + rng.uniform(0, 0.002, n),
-        "low": close - rng.uniform(0, 0.002, n),
-        "close": close,
-        "volume": rng.integers(100, 1000, n).astype(float),
-        "tick_count": rng.integers(50, 500, n),
-    })
+    return pd.DataFrame(
+        {
+            "time": pd.date_range("2024-01-01", periods=n, freq="h"),
+            "open": close - rng.uniform(0, 0.001, n),
+            "high": close + rng.uniform(0, 0.002, n),
+            "low": close - rng.uniform(0, 0.002, n),
+            "close": close,
+            "volume": rng.integers(100, 1000, n).astype(float),
+            "tick_count": rng.integers(50, 500, n),
+        }
+    )
 
 
 # =====================================================================
@@ -53,6 +56,7 @@ class TestWalkForwardIntegration:
     def test_auto_validate_config_exists(self):
         """WalkForwardConfig should have auto_validate field."""
         from apexfx.config.schema import WalkForwardConfig
+
         cfg = WalkForwardConfig()
         assert hasattr(cfg, "auto_validate")
         assert cfg.auto_validate is False
@@ -65,15 +69,14 @@ class TestWalkForwardIntegration:
         rng = np.random.default_rng(42)
         # Returns with slight positive bias
         returns = rng.normal(0.001, 0.01, 200)
-        p_value = WalkForwardValidator.monte_carlo_test(
-            returns, n_permutations=1000
-        )
+        p_value = WalkForwardValidator.monte_carlo_test(returns, n_permutations=1000)
         assert 0.0 <= p_value <= 1.0
 
     def test_walk_forward_monte_carlo_empty(self):
         """Monte Carlo test with empty returns should return 1.0."""
         pytest.importorskip("torch", reason="torch required for walk_forward")
         from apexfx.training.walk_forward import WalkForwardValidator
+
         assert WalkForwardValidator.monte_carlo_test(np.array([])) == 1.0
 
 
@@ -88,12 +91,21 @@ class TestStressTesting:
     def test_preset_scenarios_exist(self):
         """All 6 preset scenarios should be registered."""
         from apexfx.risk.stress_testing import StressTester
-        expected = {"flash_crash", "snb_shock", "brexit", "covid_march", "fed_surprise", "gap_weekend"}
+
+        expected = {
+            "flash_crash",
+            "snb_shock",
+            "brexit",
+            "covid_march",
+            "fed_surprise",
+            "gap_weekend",
+        }
         assert set(StressTester.PRESET_SCENARIOS.keys()) == expected
 
     def test_run_single_scenario(self):
         """Running a single scenario should produce valid StressResult."""
         from apexfx.risk.stress_testing import StressTester
+
         tester = StressTester(var_limit=0.02)
         scenario = StressTester.PRESET_SCENARIOS["flash_crash"]
         result = tester.run_scenario(scenario, portfolio_value=100_000)
@@ -106,6 +118,7 @@ class TestStressTesting:
     def test_run_all_presets(self):
         """Running all presets should return results for each scenario."""
         from apexfx.risk.stress_testing import StressTester
+
         tester = StressTester(var_limit=0.02)
         results = tester.run_all_presets(portfolio_value=100_000)
         assert len(results) == 6
@@ -116,6 +129,7 @@ class TestStressTesting:
     def test_monte_carlo_stress(self):
         """Monte Carlo simulation should produce valid VaR/CVaR estimates."""
         from apexfx.risk.stress_testing import StressTester
+
         tester = StressTester(var_limit=0.02)
         rng = np.random.default_rng(42)
         returns = rng.normal(0.0001, 0.01, 252)
@@ -137,6 +151,7 @@ class TestStressTesting:
     def test_reverse_stress_test(self):
         """Reverse stress test should find minimum shock for target loss."""
         from apexfx.risk.stress_testing import StressTester
+
         tester = StressTester(var_limit=0.02)
 
         rs = tester.reverse_stress_test(
@@ -162,6 +177,7 @@ class TestPortfolioVaR:
 
     def _create_var_calc(self):
         from apexfx.risk.var_calculator import VaRCalculator
+
         return VaRCalculator(confidence=0.99)
 
     def test_portfolio_var_single_asset(self):
@@ -205,9 +221,7 @@ class TestPortfolioVaR:
         corr = np.array([[1.0]])
         individual_vars = {"EURUSD": 0.02, "GBPUSD": 0.025}
 
-        mvar = calc.compute_marginal_var(
-            "GBPUSD", 50_000, positions, corr, individual_vars
-        )
+        mvar = calc.compute_marginal_var("GBPUSD", 50_000, positions, corr, individual_vars)
         # Marginal VaR can be negative (diversification benefit) or positive
         assert np.isfinite(mvar)
         # With zero correlation, diversification should lower portfolio VaR
@@ -225,6 +239,7 @@ class TestStateRecovery:
     def test_wal_entry_checksum(self):
         """WAL entry checksum should be deterministic."""
         from apexfx.live.state_manager import WALEntry
+
         data1 = {"equity": 100_000}
         cs1 = WALEntry.compute_checksum(data1)
         entry1 = WALEntry(
@@ -250,6 +265,7 @@ class TestStateRecovery:
     def test_wal_entry_different_data(self):
         """Different data should produce different checksums."""
         from apexfx.live.state_manager import WALEntry
+
         data1 = {"equity": 100_000}
         data2 = {"equity": 99_000}
         cs1 = WALEntry.compute_checksum(data1)
@@ -259,6 +275,7 @@ class TestStateRecovery:
     def test_state_manager_init_with_wal(self):
         """StateManager should initialize with WAL support."""
         from apexfx.live.state_manager import StateManager
+
         with tempfile.TemporaryDirectory() as tmpdir:
             state_file = str(Path(tmpdir) / "state.json")
             sm = StateManager(
@@ -271,6 +288,7 @@ class TestStateRecovery:
     def test_state_manager_equity_update_with_wal(self):
         """Equity update should write WAL entry."""
         from apexfx.live.state_manager import StateManager
+
         with tempfile.TemporaryDirectory() as tmpdir:
             state_file = str(Path(tmpdir) / "state.json")
             sm = StateManager(
@@ -289,6 +307,7 @@ class TestStateRecovery:
     def test_state_manager_checkpoint(self):
         """Checkpoint should persist state and truncate WAL."""
         from apexfx.live.state_manager import StateManager
+
         with tempfile.TemporaryDirectory() as tmpdir:
             state_file = str(Path(tmpdir) / "state.json")
             sm = StateManager(
@@ -409,12 +428,14 @@ class TestOrderBookFeatures:
     def test_feature_names(self):
         """OrderBookExtractor should declare 8 features."""
         from apexfx.features.orderbook import OrderBookExtractor
+
         extractor = OrderBookExtractor()
         assert len(extractor.feature_names) == 8
 
     def test_extract_from_ohlcv(self):
         """Synthetic L2 extraction from OHLCV should produce valid features."""
         from apexfx.features.orderbook import OrderBookExtractor
+
         extractor = OrderBookExtractor()
         bars = _make_bars(100)
         features = extractor.extract(bars)
@@ -427,6 +448,7 @@ class TestOrderBookFeatures:
     def test_feature_dimensions(self):
         """Feature output dimensions should match declared names."""
         from apexfx.features.orderbook import OrderBookExtractor
+
         extractor = OrderBookExtractor()
         bars = _make_bars(50)
         features = extractor.extract(bars)
@@ -444,12 +466,14 @@ class TestSentimentExtractor:
     def test_feature_names(self):
         """SentimentExtractor should declare 6 features."""
         from apexfx.features.sentiment import SentimentExtractor
+
         extractor = SentimentExtractor()
         assert len(extractor.feature_names) == 6
 
     def test_extract_returns_neutral_for_backtest(self):
         """Backtesting mode should return zero/neutral sentiment features."""
         from apexfx.features.sentiment import SentimentExtractor
+
         extractor = SentimentExtractor()
         bars = _make_bars(50)
         features = extractor.extract(bars)
@@ -461,12 +485,19 @@ class TestSentimentExtractor:
     def test_keyword_fallback_scoring(self):
         """Keyword-based fallback should score positive/negative headlines."""
         from apexfx.features.sentiment import SentimentExtractor
+
         extractor = SentimentExtractor()
 
         # Update with positive headlines
-        extractor.update_headlines([
-            {"text": "EUR surges on strong GDP growth bullish outlook", "timestamp": "2024-01-01T12:00:00", "source": "test"},
-        ])
+        extractor.update_headlines(
+            [
+                {
+                    "text": "EUR surges on strong GDP growth bullish outlook",
+                    "timestamp": "2024-01-01T12:00:00",
+                    "source": "test",
+                },
+            ]
+        )
 
         live_features = extractor.extract_live()
         assert len(live_features) == 6
@@ -514,6 +545,7 @@ class TestOnlineLearner:
     def test_result_dataclass(self):
         """OnlineLearnResult should be properly structured."""
         from apexfx.training.online_learner import OnlineLearnResult
+
         result = OnlineLearnResult(
             retrained=True,
             promoted=True,
@@ -542,6 +574,7 @@ class TestShadowTrader:
     def test_register_shadow(self):
         """Registering a shadow model should initialize tracking."""
         from apexfx.live.shadow_trader import ShadowTrader
+
         trader = ShadowTrader(evaluation_bars=100)
         trader.register_shadow("model_v2")
         assert "model_v2" in trader._shadow_signals
@@ -550,6 +583,7 @@ class TestShadowTrader:
     def test_on_bar_tracking(self):
         """on_bar should track signals for shadow models."""
         from apexfx.live.shadow_trader import ShadowTrader
+
         trader = ShadowTrader(evaluation_bars=100)
 
         for i in range(60):
@@ -565,6 +599,7 @@ class TestShadowTrader:
     def test_evaluate_returns_result(self):
         """Evaluate should return ShadowResult after enough signals."""
         from apexfx.live.shadow_trader import ShadowTrader
+
         trader = ShadowTrader(evaluation_bars=100)
 
         rng = np.random.default_rng(42)
@@ -584,6 +619,7 @@ class TestShadowTrader:
     def test_evaluate_insufficient_data(self):
         """Evaluate should return None with insufficient data."""
         from apexfx.live.shadow_trader import ShadowTrader
+
         trader = ShadowTrader(evaluation_bars=100)
         trader.register_shadow("v2")
 
@@ -626,6 +662,7 @@ class TestShadowTrader:
     def test_gradual_rollout_stop(self):
         """Stopping rollout should reset weight to 0."""
         from apexfx.live.shadow_trader import GradualRollout
+
         rollout = GradualRollout(ramp_bars=100)
         rollout.start()
         for _ in range(50):
@@ -646,12 +683,14 @@ class TestNewsFetcher:
     def test_domain_extraction(self):
         """Domain extraction should work for various URL formats."""
         from apexfx.data.news_fetcher import NewsFetcher
+
         assert NewsFetcher._extract_domain("https://www.forexlive.com/feed") == "forexlive.com"
         assert NewsFetcher._extract_domain("https://fxstreet.com/rss") == "fxstreet.com"
 
     def test_rss_parsing(self):
         """RSS parser should extract headlines from XML."""
         from apexfx.data.news_fetcher import NewsFetcher
+
         fetcher = NewsFetcher()
 
         xml = """<?xml version="1.0"?>
@@ -682,6 +721,7 @@ class TestPhase4Config:
 
     def test_portfolio_var_config(self):
         from apexfx.config.schema import PortfolioVaRConfig
+
         cfg = PortfolioVaRConfig()
         assert cfg.multi_asset is False
         assert cfg.correlation_lookback_days == 60
@@ -689,6 +729,7 @@ class TestPhase4Config:
 
     def test_stress_test_config(self):
         from apexfx.config.schema import StressTestConfig
+
         cfg = StressTestConfig()
         assert cfg.enabled is True
         assert cfg.run_on_startup is True
@@ -696,6 +737,7 @@ class TestPhase4Config:
 
     def test_smart_execution_config(self):
         from apexfx.config.schema import SmartExecutionConfig
+
         cfg = SmartExecutionConfig()
         assert cfg.algorithm == "auto"
         assert cfg.urgency == 0.5
@@ -703,6 +745,7 @@ class TestPhase4Config:
 
     def test_online_learning_config(self):
         from apexfx.config.schema import OnlineLearningConfig
+
         cfg = OnlineLearningConfig()
         assert cfg.enabled is False
         assert cfg.mode == "fine_tune"
@@ -710,6 +753,7 @@ class TestPhase4Config:
 
     def test_shadow_trading_config(self):
         from apexfx.config.schema import ShadowTradingConfig
+
         cfg = ShadowTradingConfig()
         assert cfg.enabled is False
         assert cfg.evaluation_bars == 500
@@ -718,6 +762,7 @@ class TestPhase4Config:
     def test_full_app_config_integration(self):
         """Full AppConfig should include all Phase 4 config sections."""
         from apexfx.config.schema import AppConfig
+
         cfg = AppConfig()
         assert hasattr(cfg.risk, "portfolio_var")
         assert hasattr(cfg.risk, "stress_test")

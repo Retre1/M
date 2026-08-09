@@ -229,9 +229,16 @@ class TestExecutorClose:
         mock_mt5.close_position.return_value = _make_trade_result(success=True)
         mock_mt5.get_positions.return_value = [
             Position(
-                ticket=12345, symbol="EURUSD", type=0, volume=0.10,
-                price_open=1.1000, price_current=1.1010, profit=10.0,
-                sl=0.0, tp=0.0, time=datetime.now(),
+                ticket=12345,
+                symbol="EURUSD",
+                type=0,
+                volume=0.10,
+                price_open=1.1000,
+                price_current=1.1010,
+                profit=10.0,
+                sl=0.0,
+                tp=0.0,
+                time=datetime.now(),
             ),
         ]
 
@@ -248,14 +255,23 @@ class TestExecutorClose:
         executor._current_position_volume = 0.10
         mock_mt5.get_positions.return_value = [
             Position(
-                ticket=12345, symbol="EURUSD", type=0, volume=0.10,
-                price_open=1.1000, price_current=1.1010, profit=10.0,
-                sl=0.0, tp=0.0, time=datetime.now(),
+                ticket=12345,
+                symbol="EURUSD",
+                type=0,
+                volume=0.10,
+                price_open=1.1000,
+                price_current=1.1010,
+                profit=10.0,
+                sl=0.0,
+                tp=0.0,
+                time=datetime.now(),
             ),
         ]
 
         decision = _make_risk_decision(
-            approved=True, adjusted_action=0.0, position_size=0.0,
+            approved=True,
+            adjusted_action=0.0,
+            position_size=0.0,
             reason="Action too small, staying neutral",
         )
         result = await executor.execute(decision, current_direction=1, current_volume=0.10)
@@ -268,9 +284,16 @@ class TestExecutorClose:
         executor._current_position_volume = 0.10
         mock_mt5.get_positions.return_value = [
             Position(
-                ticket=12345, symbol="EURUSD", type=0, volume=0.10,
-                price_open=1.1000, price_current=1.1010, profit=10.0,
-                sl=0.0, tp=0.0, time=datetime.now(),
+                ticket=12345,
+                symbol="EURUSD",
+                type=0,
+                volume=0.10,
+                price_open=1.1000,
+                price_current=1.1010,
+                profit=10.0,
+                sl=0.0,
+                tp=0.0,
+                time=datetime.now(),
             ),
         ]
         mock_mt5.close_position.return_value = _make_trade_result(
@@ -278,7 +301,9 @@ class TestExecutorClose:
         )
 
         decision = _make_risk_decision(
-            approved=True, adjusted_action=0.0, position_size=0.0,
+            approved=True,
+            adjusted_action=0.0,
+            position_size=0.0,
             reason="Action too small, staying neutral",
         )
         result = await executor.execute(decision, current_direction=1, current_volume=0.10)
@@ -297,7 +322,9 @@ class TestExecutorNoChange:
         executor._current_position_direction = 1
         executor._current_position_volume = 0.10
         decision = _make_risk_decision(
-            approved=True, adjusted_action=0.8, position_size=0.10,
+            approved=True,
+            adjusted_action=0.8,
+            position_size=0.10,
         )
         result = await executor.execute(decision, current_direction=1, current_volume=0.10)
         assert result.success
@@ -324,9 +351,16 @@ class TestSyncWithMT5:
     def test_sync_updates_from_mt5(self, executor: Executor, mock_mt5: MagicMock):
         mock_mt5.get_positions.return_value = [
             Position(
-                ticket=11111, symbol="EURUSD", type=1, volume=0.25,
-                price_open=1.1050, price_current=1.1000, profit=50.0,
-                sl=0.0, tp=0.0, time=datetime.now(),
+                ticket=11111,
+                symbol="EURUSD",
+                type=1,
+                volume=0.25,
+                price_open=1.1050,
+                price_current=1.1000,
+                profit=50.0,
+                sl=0.0,
+                tp=0.0,
+                time=datetime.now(),
             ),
         ]
         executor.sync_with_mt5()
@@ -462,9 +496,13 @@ class TestOrderManagerPlaceOrder:
     async def test_market_order_filled(self, mock_mt5: MagicMock):
         config = _make_exec_config(order_type="market")
         om = OrderManager(config=config, mt5_client=mock_mt5)
-        mock_mt5.send_order.return_value = _make_trade_result(success=True, price=1.1001, volume=0.10)
+        mock_mt5.send_order.return_value = _make_trade_result(
+            success=True, price=1.1001, volume=0.10
+        )
 
-        managed = await om.place_order("EURUSD", direction=1, volume=0.10, market_price=1.1000, pip_value=0.0001)
+        managed = await om.place_order(
+            "EURUSD", direction=1, volume=0.10, market_price=1.1000, pip_value=0.0001
+        )
         assert managed.status == OrderStatus.FILLED
         assert managed.fill_price == 1.1001
         assert managed.filled_volume == 0.10
@@ -475,7 +513,9 @@ class TestOrderManagerPlaceOrder:
         om = OrderManager(config=config, mt5_client=mock_mt5)
         mock_mt5.send_order.return_value = _make_trade_result(success=False)
 
-        managed = await om.place_order("EURUSD", direction=1, volume=0.10, market_price=1.1000, pip_value=0.0001)
+        managed = await om.place_order(
+            "EURUSD", direction=1, volume=0.10, market_price=1.1000, pip_value=0.0001
+        )
         assert managed.status == OrderStatus.REJECTED
 
     @pytest.mark.asyncio
@@ -484,7 +524,9 @@ class TestOrderManagerPlaceOrder:
         om = OrderManager(config=config, mt5_client=mock_mt5)
         mock_mt5.send_order.return_value = _make_trade_result(success=True, order=55555)
 
-        managed = await om.place_order("EURUSD", direction=1, volume=0.10, market_price=1.1000, pip_value=0.0001)
+        managed = await om.place_order(
+            "EURUSD", direction=1, volume=0.10, market_price=1.1000, pip_value=0.0001
+        )
         assert managed.status == OrderStatus.PENDING
         assert managed.order_ticket == 55555
         # Buy limit should be below market
@@ -496,7 +538,9 @@ class TestOrderManagerPlaceOrder:
         om = OrderManager(config=config, mt5_client=mock_mt5)
         mock_mt5.send_order.return_value = _make_trade_result(success=True, order=55556)
 
-        managed = await om.place_order("EURUSD", direction=-1, volume=0.10, market_price=1.1000, pip_value=0.0001)
+        managed = await om.place_order(
+            "EURUSD", direction=-1, volume=0.10, market_price=1.1000, pip_value=0.0001
+        )
         # Sell limit should be above market
         assert managed.limit_price > 1.1000
 
@@ -510,7 +554,9 @@ class TestOrderManagerPlaceOrder:
         ok_result = _make_trade_result(success=True, price=1.1002, volume=0.10, order=77777)
         mock_mt5.send_order.side_effect = [fail_result, ok_result]
 
-        managed = await om.place_order("EURUSD", direction=1, volume=0.10, market_price=1.1000, pip_value=0.0001)
+        managed = await om.place_order(
+            "EURUSD", direction=1, volume=0.10, market_price=1.1000, pip_value=0.0001
+        )
         assert managed.status == OrderStatus.FILLED
         assert managed.fill_price == 1.1002
 

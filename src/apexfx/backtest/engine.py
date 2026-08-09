@@ -47,6 +47,7 @@ class Strategy(Protocol):
 @dataclass
 class OpenPosition:
     """Tracks an open position during backtesting."""
+
     symbol: str
     direction: int
     entry_price: float
@@ -61,6 +62,7 @@ class OpenPosition:
 @dataclass
 class BacktestConfig:
     """Configuration for a backtest run."""
+
     initial_equity: float = 100_000.0
     commission_per_lot: float = 7.0  # $7 per round-trip lot
     slippage_pips: float = 0.5  # avg slippage in pips
@@ -185,7 +187,9 @@ class BacktestEngine:
                         current_price=float(bar["close"]),
                         current_spread=self._config.spread_pips * self._config.pip_value,
                         current_atr=atr_val,
-                        historical_atr=np.nanmean(self._atr[max(0, i - 100): i]) if i > 0 else atr_val,
+                        historical_atr=np.nanmean(self._atr[max(0, i - 100) : i])
+                        if i > 0
+                        else atr_val,
                         spread_limit=self._config.spread_pips * self._config.pip_value * 3,
                     )
 
@@ -292,9 +296,7 @@ class BacktestEngine:
         direction = int(np.sign(action))
 
         # Close existing position if direction changes
-        if self._position is not None and (
-            direction != self._position.direction or direction == 0
-        ):
+        if self._position is not None and (direction != self._position.direction or direction == 0):
             self._close_position(bar, bar_idx, timestamp, "signal")
             if direction == 0:
                 return
@@ -361,7 +363,12 @@ class BacktestEngine:
 
         # Compute P&L
         price_diff = exit_price - self._position.entry_price
-        pnl = price_diff * self._position.direction * self._position.volume * self._config.contract_size
+        pnl = (
+            price_diff
+            * self._position.direction
+            * self._position.volume
+            * self._config.contract_size
+        )
 
         # Deduct close commission
         commission = self._position.volume * self._config.commission_per_lot
@@ -457,8 +464,10 @@ class BacktestEngine:
 
         price_diff = float(bar["close"]) - self._position.entry_price
         unrealized = (
-            price_diff * self._position.direction
-            * self._position.volume * self._config.contract_size
+            price_diff
+            * self._position.direction
+            * self._position.volume
+            * self._config.contract_size
         )
         return self._equity + unrealized
 
@@ -499,6 +508,7 @@ class BacktestEngine:
 # ------------------------------------------------------------------
 # Walk-Forward Validation
 # ------------------------------------------------------------------
+
 
 def walk_forward_backtest(
     bars: pd.DataFrame,

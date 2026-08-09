@@ -167,11 +167,7 @@ class AdaptiveStopLoss:
             self._best_price = current_price
 
         # --- Break-even logic ---
-        if (
-            not self._breakeven_activated
-            and self._entry_price is not None
-            and current_atr > 0
-        ):
+        if not self._breakeven_activated and self._entry_price is not None and current_atr > 0:
             profit_distance = (current_price - self._entry_price) * direction
             if profit_distance >= current_atr * self._breakeven_atr_mult:
                 self._breakeven_activated = True
@@ -221,7 +217,7 @@ class PartialFillModel:
 
     # Session liquidity multipliers (higher = better fills)
     SESSION_FILL_MULT: dict[str, float] = {
-        "overlap": 1.0,     # Best liquidity
+        "overlap": 1.0,  # Best liquidity
         "london": 0.95,
         "new_york": 0.95,
         "tokyo": 0.85,
@@ -373,23 +369,37 @@ class ForexTradingEnv(gym.Env):
         self._partial_fill_model = partial_fill_model
 
         # --- Spaces ---
-        self.action_space = spaces.Box(
-            low=-1.0, high=1.0, shape=(1,), dtype=np.float32
-        )
+        self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(1,), dtype=np.float32)
 
         market_flat_size = lookback * n_market_features
         time_flat_size = lookback * n_time_features
 
-        self.observation_space = spaces.Dict({
-            "market_features": spaces.Box(-np.inf, np.inf, shape=(market_flat_size,), dtype=np.float32),
-            "time_features": spaces.Box(-np.inf, np.inf, shape=(time_flat_size,), dtype=np.float32),
-            "trend_features": spaces.Box(-np.inf, np.inf, shape=(n_trend_features,), dtype=np.float32),
-            "reversion_features": spaces.Box(-np.inf, np.inf, shape=(n_reversion_features,), dtype=np.float32),
-            "regime_features": spaces.Box(-np.inf, np.inf, shape=(n_regime_features,), dtype=np.float32),
-            "fundamental_features": spaces.Box(-np.inf, np.inf, shape=(n_fundamental_features,), dtype=np.float32),
-            "structure_features": spaces.Box(-np.inf, np.inf, shape=(n_structure_features,), dtype=np.float32),
-            "position_state": spaces.Box(-np.inf, np.inf, shape=(8,), dtype=np.float32),
-        })
+        self.observation_space = spaces.Dict(
+            {
+                "market_features": spaces.Box(
+                    -np.inf, np.inf, shape=(market_flat_size,), dtype=np.float32
+                ),
+                "time_features": spaces.Box(
+                    -np.inf, np.inf, shape=(time_flat_size,), dtype=np.float32
+                ),
+                "trend_features": spaces.Box(
+                    -np.inf, np.inf, shape=(n_trend_features,), dtype=np.float32
+                ),
+                "reversion_features": spaces.Box(
+                    -np.inf, np.inf, shape=(n_reversion_features,), dtype=np.float32
+                ),
+                "regime_features": spaces.Box(
+                    -np.inf, np.inf, shape=(n_regime_features,), dtype=np.float32
+                ),
+                "fundamental_features": spaces.Box(
+                    -np.inf, np.inf, shape=(n_fundamental_features,), dtype=np.float32
+                ),
+                "structure_features": spaces.Box(
+                    -np.inf, np.inf, shape=(n_structure_features,), dtype=np.float32
+                ),
+                "position_state": spaces.Box(-np.inf, np.inf, shape=(8,), dtype=np.float32),
+            }
+        )
 
         # --- Precompute historical ATR for realistic cost modeling ---
         self._historical_atr: float | None = self._precompute_historical_atr()
@@ -508,7 +518,12 @@ class ForexTradingEnv(gym.Env):
                 if "structure_break_bull" in row.index and "structure_break_bear" in row.index:
                     bull_break = float(row.get("structure_break_bull", 0)) > 0.5
                     bear_break = float(row.get("structure_break_bear", 0)) > 0.5
-                    if self._position_direction > 0 and bull_break or self._position_direction < 0 and bear_break:
+                    if (
+                        self._position_direction > 0
+                        and bull_break
+                        or self._position_direction < 0
+                        and bear_break
+                    ):
                         structure_aligned = True
 
             self._reward_fn.set_trade_info(
@@ -542,7 +557,9 @@ class ForexTradingEnv(gym.Env):
                 if "structure_break_bull" in row.index and "structure_break_bear" in row.index:
                     bull = float(row.get("structure_break_bull", 0)) > 0.5
                     bear = float(row.get("structure_break_bear", 0)) > 0.5
-                    if (self._position_direction > 0 and bull) or (self._position_direction < 0 and bear):
+                    if (self._position_direction > 0 and bull) or (
+                        self._position_direction < 0 and bear
+                    ):
                         structure_aligned = True
             self._reward_fn.set_step_context(
                 position=float(self._position_direction) * float(self._position),
@@ -720,7 +737,9 @@ class ForexTradingEnv(gym.Env):
         self._total_trades += 1
         self._stop_loss.reset()
         self._stop_loss.set_entry(price)
-        self._position_layers = [{"size": size, "entry_price": price, "entry_idx": self._current_idx}]
+        self._position_layers = [
+            {"size": size, "entry_price": price, "entry_idx": self._current_idx}
+        ]
 
     def _close_position(self, price: float) -> None:
         """Close the current position."""
@@ -759,11 +778,13 @@ class ForexTradingEnv(gym.Env):
 
         if size_diff > 0 and len(self._position_layers) < self._max_layers:
             # Adding to position — track as new layer
-            self._position_layers.append({
-                "size": size_diff,
-                "entry_price": price,
-                "entry_idx": self._current_idx,
-            })
+            self._position_layers.append(
+                {
+                    "size": size_diff,
+                    "entry_price": price,
+                    "entry_idx": self._current_idx,
+                }
+            )
             # Update weighted avg entry price for stop-loss
             total_size = sum(layer["size"] for layer in self._position_layers)
             if total_size > 0:

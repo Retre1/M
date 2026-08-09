@@ -110,6 +110,10 @@ ignore = [
 # Tests deliberately build objects they then throw away, and a few assert on
 # broad exception types where the specific class is an implementation detail.
 "tests/**" = ["F841", "B017"]
+# The HTML report is one big embedded template; its CSS rules read as single
+# lines and wrapping them at 100 columns makes the stylesheet harder to follow,
+# not easier.
+"src/apexfx/backtest/report.py" = ["E501"]
 
 [tool.mypy]
 python_version = "3.11"

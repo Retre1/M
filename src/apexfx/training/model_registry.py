@@ -93,13 +93,12 @@ class ModelRegistry:
         now = datetime.now(UTC).isoformat()
         with self._lock:
             # Deactivate current active version
-            self._conn.execute(
-                "UPDATE model_versions SET is_active = 0 WHERE is_active = 1"
-            )
+            self._conn.execute("UPDATE model_versions SET is_active = 0 WHERE is_active = 1")
             cursor = self._conn.execute(
                 """\
                 INSERT INTO model_versions
-                    (model_path, promoted_at, validation_sharpe, validation_return, is_active, notes)
+                    (model_path, promoted_at, validation_sharpe,
+                     validation_return, is_active, notes)
                 VALUES (?, ?, ?, ?, 1, ?)
                 """,
                 (model_path, now, validation_sharpe, validation_return, notes),
@@ -127,9 +126,7 @@ class ModelRegistry:
     def get_active(self) -> ModelVersion | None:
         """Return the currently active model version, or None."""
         with self._lock:
-            row = self._conn.execute(
-                "SELECT * FROM model_versions WHERE is_active = 1"
-            ).fetchone()
+            row = self._conn.execute("SELECT * FROM model_versions WHERE is_active = 1").fetchone()
         if row is None:
             return None
         return _row_to_version(row)
@@ -168,9 +165,7 @@ class ModelRegistry:
             if target is None:
                 raise ValueError(f"Version {to_version_id} not found")
 
-            self._conn.execute(
-                "UPDATE model_versions SET is_active = 0 WHERE is_active = 1"
-            )
+            self._conn.execute("UPDATE model_versions SET is_active = 0 WHERE is_active = 1")
             self._conn.execute(
                 "UPDATE model_versions SET is_active = 1 WHERE version_id = ?",
                 (to_version_id,),
@@ -189,9 +184,7 @@ class ModelRegistry:
     def deactivate_current(self) -> None:
         """Deactivate the current active model (emergency stop)."""
         with self._lock:
-            self._conn.execute(
-                "UPDATE model_versions SET is_active = 0 WHERE is_active = 1"
-            )
+            self._conn.execute("UPDATE model_versions SET is_active = 0 WHERE is_active = 1")
             self._conn.commit()
         logger.warning("All active models deactivated (emergency stop)")
 

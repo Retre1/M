@@ -26,8 +26,14 @@ logger = get_logger(__name__)
 # Maps currency to whether positive surprise is bullish (+1) or bearish (-1)
 # for the currency itself (not the pair)
 _CURRENCY_DIRECTION: dict[str, int] = {
-    "USD": 1, "EUR": 1, "GBP": 1, "JPY": 1,
-    "AUD": 1, "NZD": 1, "CAD": 1, "CHF": 1,
+    "USD": 1,
+    "EUR": 1,
+    "GBP": 1,
+    "JPY": 1,
+    "AUD": 1,
+    "NZD": 1,
+    "CAD": 1,
+    "CHF": 1,
 }
 
 
@@ -176,7 +182,9 @@ class FundamentalExtractor(BaseFeatureExtractor):
             # 4. Fundamental bias (EMA of directional surprises)
             directional = self._compute_directional_surprise(bar_dt, events)
             bias_ema = alpha * directional + (1 - alpha) * bias_ema
-            result.iloc[i, result.columns.get_loc("fundamental_bias")] = np.clip(bias_ema, -3.0, 3.0)
+            result.iloc[i, result.columns.get_loc("fundamental_bias")] = np.clip(
+                bias_ema, -3.0, 3.0
+            )
 
             # 5. Rate differential
             result.iloc[i, result.columns.get_loc("rate_differential")] = (
@@ -219,7 +227,8 @@ class FundamentalExtractor(BaseFeatureExtractor):
             end_dt = (end + timedelta(days=1)).to_pydatetime()
 
             return self._calendar.get_events(
-                start_dt, end_dt,
+                start_dt,
+                end_dt,
                 currencies=self._currencies,
                 impact=None,  # include all, we filter per-feature
             )
@@ -228,7 +237,9 @@ class FundamentalExtractor(BaseFeatureExtractor):
             return []
 
     def _compute_surprise_score(
-        self, bar_dt: datetime, events: list[CalendarEvent],
+        self,
+        bar_dt: datetime,
+        events: list[CalendarEvent],
     ) -> float:
         """Rolling weighted surprise with exponential decay over 24h."""
         total = 0.0
@@ -249,7 +260,9 @@ class FundamentalExtractor(BaseFeatureExtractor):
         return float(np.clip(total, -5.0, 5.0))
 
     def _is_impact_active(
-        self, bar_dt: datetime, events: list[CalendarEvent],
+        self,
+        bar_dt: datetime,
+        events: list[CalendarEvent],
     ) -> float:
         """1.0 if high-impact event occurred in the last impact_window minutes."""
         for event in reversed(events):
@@ -265,7 +278,9 @@ class FundamentalExtractor(BaseFeatureExtractor):
         return 0.0
 
     def _time_to_next_event(
-        self, bar_dt: datetime, events: list[CalendarEvent],
+        self,
+        bar_dt: datetime,
+        events: list[CalendarEvent],
     ) -> float:
         """Normalized time to next high-impact event. 0 = imminent, 1 = far away."""
         for event in events:
@@ -280,7 +295,9 @@ class FundamentalExtractor(BaseFeatureExtractor):
         return 1.0  # no upcoming event = far away
 
     def _compute_directional_surprise(
-        self, bar_dt: datetime, events: list[CalendarEvent],
+        self,
+        bar_dt: datetime,
+        events: list[CalendarEvent],
     ) -> float:
         """Directional surprise for the pair: base vs quote currency impact."""
         score = 0.0
@@ -307,7 +324,9 @@ class FundamentalExtractor(BaseFeatureExtractor):
         return float(score)
 
     def _compute_hawkish_dovish(
-        self, bar_dt: datetime, events: list[CalendarEvent],
+        self,
+        bar_dt: datetime,
+        events: list[CalendarEvent],
     ) -> float:
         """Net hawkish/dovish score from recent events. +1 hawkish, -1 dovish."""
         score = 0.0
@@ -354,7 +373,7 @@ class FundamentalExtractor(BaseFeatureExtractor):
 
             # Compare current ATR to rolling baseline
             if bar_idx >= 14 and not np.isnan(atr_values[bar_idx]):
-                baseline = np.nanmean(atr_values[max(0, bar_idx - 14):bar_idx])
+                baseline = np.nanmean(atr_values[max(0, bar_idx - 14) : bar_idx])
                 if baseline > 0:
                     ratio = atr_values[bar_idx] / baseline
                     return float(np.clip(ratio, 0.0, 5.0))
@@ -362,7 +381,9 @@ class FundamentalExtractor(BaseFeatureExtractor):
         return 1.0  # no event → ratio = 1 (normal)
 
     def _compute_conflicting_signals(
-        self, bar_dt: datetime, events: list[CalendarEvent],
+        self,
+        bar_dt: datetime,
+        events: list[CalendarEvent],
     ) -> float:
         """1.0 if recent events give opposing signals (uncertainty)."""
         lookback = timedelta(hours=24)
