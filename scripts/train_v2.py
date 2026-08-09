@@ -40,6 +40,7 @@ from apexfx.data.bar_loader import (
 from apexfx.training.config import (
     CurriculumV2Config,
     StageConfig,
+    load_curriculum_v2_config,
 )
 from apexfx.training.trainer_v2 import TrainerV2
 from apexfx.utils.logging import get_logger
@@ -136,6 +137,8 @@ def main() -> None:
     parser.add_argument("--features-cache", default="data/cache/features",
                         help="Directory of pre-computed feature parquet files")
     parser.add_argument("--checkpoint-dir", default="models/v2_checkpoints")
+    parser.add_argument("--config-dir", default="configs",
+                        help="Directory holding training.yaml (ignored with --smoke)")
     parser.add_argument("--tb-log-dir", default=None,
                         help="TensorBoard log directory (optional)")
     parser.add_argument("--smoke", action="store_true",
@@ -208,7 +211,10 @@ def main() -> None:
                 n_symbols=len(multi_symbol_data) or 1)
 
     # 3. Config
-    cfg = build_smoke_config() if args.smoke else CurriculumV2Config()
+    # Smoke runs keep their own tiny built-in curriculum; a real run reads
+    # configs/training.yaml. Before this, every run silently used the
+    # hardcoded CurriculumV2Config defaults and ignored the YAML entirely.
+    cfg = build_smoke_config() if args.smoke else load_curriculum_v2_config(args.config_dir)
     if args.total_timesteps is not None:
         cfg = scale_config(cfg, args.total_timesteps)
         logger.info("Scaled total timesteps",
