@@ -140,6 +140,16 @@ def executor(exec_config, symbol_config, mock_mt5) -> Executor:
         return exc
 
 
+@pytest.fixture(autouse=True)
+def _freeze_clock(frozen_trading_clock):
+    """Pin the clock for every test in this module.
+
+    ``Executor.execute`` runs a ``LiquidityGuard`` check that refuses to trade
+    when the forex market is closed. Without a fixed clock these tests pass
+    Monday to Thursday and fail every weekend.
+    """
+
+
 # ---------------------------------------------------------------------------
 # Executor.execute — blocked when not approved
 # ---------------------------------------------------------------------------

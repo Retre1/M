@@ -261,6 +261,15 @@ class TestRiskManagerEvaluateAction:
         with patch.object(KillSwitch, "KILL_FILE", tmp_path / "KILL_SWITCH"):
             yield
 
+    @pytest.fixture(autouse=True)
+    def _freeze_clock(self, frozen_trading_clock):
+        """Pin the clock so WeekendGapGuard does not veto on weekends.
+
+        These tests exercise the daily-loss, spread, cooldown and dead-zone
+        gates; the weekend gate fires before them and would otherwise make the
+        outcome depend on the day the suite runs.
+        """
+
     def _make_rm(self, **config_overrides) -> RiskManager:
         cfg = _make_risk_config(**config_overrides)
         rm = RiskManager(config=cfg, initial_balance=100_000.0)
