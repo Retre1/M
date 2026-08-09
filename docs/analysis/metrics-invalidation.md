@@ -28,8 +28,8 @@
 
 ## 1. `profit_factor` ≡ 0 по построению
 
-`src/apexfx/training/trainer_v2.py` (ветка `v2.0-quantum-hybrid`, строки 161–164;
-снимок — `src/_v2_dump/trainer_v2.py`):
+`src/apexfx/training/trainer_v2.py`, строки 161–164 (на момент анализа — только
+на ветке `v2.0-quantum-hybrid`; после слияния — в основной линии):
 
 ```python
 gains  = rewards[rewards > 0].sum()
@@ -139,15 +139,21 @@ PF = (0.3576 × 0.226) / (0.6424 × 0.171) = 0.736 ✓ совпадает с о�
 | Фиксы аудита: tanh-насыщение, `training_mode`, NaN-safety | ❌ | ✅ (24–25 апр) |
 | `trainer_v2`, `curriculum_v2`, `reward_v5` | ✅ | ❌ |
 
-**Ни одна ветка не содержит одновременно фиксы прогонов и фиксы аудита.**
+**Ни одна ветка не содержала одновременно фиксы прогонов и фиксы аудита.**
 
 Главное достижение серии — недостающая ветка `isinstance(RARAReward_v5)` в
-`forex_env.step()`, стоившая трёх прогонов, — на `main` неприменима: класса
-`RARAReward_v5` там нет, цепочка охватывает `QuantumZScoreReward`,
-`HoldAwareReward`, `TradingReward` (`src/apexfx/env/forex_env.py:461,483,507`).
+`forex_env.step()`, стоившая трёх прогонов, — на `main` была неприменима: класса
+`RARAReward_v5` там не существовало, цепочка охватывала `QuantumZScoreReward`,
+`HoldAwareReward`, `TradingReward`.
 
-`src/_v2_dump/` — read-only снимок шести файлов для внешних инструментов, не
-импортируется ничем в `src/apexfx`, `scripts` или `tests`.
+> **Статус: устранено.** Ветки слиты в основную линию. Конфликты разрешены в
+> пользу обеих сторон: сохранены `_soft_saturate` (tanh-фикс аудита) и
+> `OnlineSharpeTracker` из `main`, восстановлен `ProfitFocusedReward` из v2,
+> ветка `RARAReward_v5` в диспетчере `forex_env` присутствует. Read-only снимок
+> `src/_v2_dump/` удалён — оригиналы шести файлов лежат в пакете. Остальные
+> находки документа (§1–§4, §6, §7) слиянием **не затронуты**: формулы метрик
+> перенесены как есть и по-прежнему считают `sharpe` и `profit_factor` по ряду
+> наград.
 
 ## 6. EWC-консолидация — no-op, логирующий успех
 
