@@ -68,7 +68,10 @@ class BacktestConfig:
     slippage_pips: float = 0.5  # avg slippage in pips
     pip_value: float = 0.0001  # for EURUSD
     contract_size: int = 100_000
-    spread_pips: float = 1.0  # simulated spread
+    # Retail MT5 on EURUSD runs 1.5-3.0 pips; the audit recommends testing at
+    # 2.0-2.5 and calls the old 1.0 default optimistic. A backtest that clears
+    # its costs only at 1.0 pip has not cleared them.
+    spread_pips: float = 2.0  # simulated spread, charged half on entry, half on exit
     atr_stop_mult: float = 2.0  # stop loss = ATR * multiplier
     atr_tp_mult: float = 3.0  # take profit = ATR * multiplier
     use_trailing_stop: bool = True
@@ -304,12 +307,17 @@ class BacktestEngine:
         # Open new position
         if self._position is None and direction != 0:
             entry_price = float(bar["close"])
-            # Apply slippage
+            # Cross the spread, then apply slippage. Bars carry mid/close, so
+            # entering pays half the spread (buy at ask, sell at bid); the
+            # other half is paid on exit. Until this was added, spread_pips
+            # only fed the risk manager's spread check and a round trip was
+            # free of it — understating the cost of every backtested trade.
+            half_spread = self._config.spread_pips * self._config.pip_value / 2
             slip = self._config.slippage_pips * self._config.pip_value
             if direction > 0:
-                entry_price += slip  # Buy higher
+                entry_price += half_spread + slip  # Buy at ask, slipping higher
             else:
-                entry_price -= slip  # Sell lower
+                entry_price -= half_spread + slip  # Sell at bid, slipping lower
 
             # Compute stop loss and take profit
             stop_loss = None
@@ -354,12 +362,13 @@ class BacktestEngine:
             return
 
         exit_price = float(bar["close"])
-        # Apply slippage
+        # The other half of the spread, plus slippage (see _execute_signal).
+        half_spread = self._config.spread_pips * self._config.pip_value / 2
         slip = self._config.slippage_pips * self._config.pip_value
         if self._position.direction > 0:
-            exit_price -= slip  # Sell lower
+            exit_price -= half_spread + slip  # Sell at bid, slipping lower
         else:
-            exit_price += slip  # Cover higher
+            exit_price += half_spread + slip  # Cover at ask, slipping higher
 
         # Compute P&L
         price_diff = exit_price - self._position.entry_price
