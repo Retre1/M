@@ -4,6 +4,7 @@
 
 ## Quick Links
 
+- [[worklog|Рабочий журнал]] — решения, ловушки репозитория, разобранные ошибки
 - [[architecture/system-overview|System Overview]]
 - [[architecture/tz-architecture|ТЗ — Архитектура программного комплекса]]
 - [[research/papers-index|Papers Index]]
