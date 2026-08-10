@@ -4,6 +4,7 @@
 
 ## Quick Links
 
+- [[plan-to-production|План до продакшена]] — фазы, ворота, критерии отказа
 - [[worklog|Рабочий журнал]] — решения, ловушки репозитория, разобранные ошибки
 - [[architecture/system-overview|System Overview]]
 - [[architecture/tz-architecture|ТЗ — Архитектура программного комплекса]]
