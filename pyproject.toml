@@ -55,6 +55,12 @@ dev = [
     # CI runs pytest with --timeout=120; without this plugin pytest exits 4
     # on argument parsing and no test is collected.
     "pytest-timeout>=2.1",
+    # Reference implementation of the risk/performance metrics, used as a test
+    # oracle only — see tests/unit/test_metrics_vs_reference.py. It found a
+    # Calmar that annualised arithmetically and a Sortino that divided by the
+    # loss count instead of the sample size. Not a runtime dependency: the
+    # training path should not pull it in.
+    "empyrical-reloaded>=0.5.12",
     "ruff>=0.1",
     "mypy>=1.7",
     "optuna>=3.4",
