@@ -5,6 +5,7 @@
 ## Quick Links
 
 - [[plan-to-production|План до продакшена]] — фазы, ворота, критерии отказа
+- [[training-strategy|Стратегия обучения]] — почему узкое место в данных, а не в алгоритме
 - [[worklog|Рабочий журнал]] — решения, ловушки репозитория, разобранные ошибки
 - [[architecture/system-overview|System Overview]]
 - [[architecture/tz-architecture|ТЗ — Архитектура программного комплекса]]
