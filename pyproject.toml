@@ -29,6 +29,11 @@ dependencies = [
     # on white noise, which made regime.py's mean-reverting class unreachable.
     # Single file, no dependencies beyond numpy/pandas.
     "hurst>=0.0.5",
+    # Combinatorial Purged CV with purging and embargo. Used by
+    # backtest/validation.py to produce many test paths instead of the single
+    # one walk-forward gives; the splitting logic is fiddly and well tested
+    # upstream. mlfinlab, the usual alternative, has gone commercial.
+    "skfolio>=0.20",
     "pyarrow>=14.0",
     "pydantic>=2.0",
     "pyyaml>=6.0",
