@@ -9,7 +9,9 @@ from apexfx.backtest.baselines import (
 )
 from apexfx.backtest.comparison import (
     ComparisonResult,
+    FoldComparison,
     StrategyScore,
+    compare_across_folds,
     compare_against_baselines,
 )
 from apexfx.backtest.engine import BacktestEngine
@@ -21,9 +23,11 @@ __all__ = [
     "BuyAndHold",
     "ComparisonResult",
     "DonchianBreakout",
+    "FoldComparison",
     "MACross",
     "RandomStrategy",
     "StrategyScore",
+    "compare_across_folds",
     "compare_against_baselines",
     "default_baselines",
 ]

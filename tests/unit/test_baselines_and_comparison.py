@@ -19,8 +19,15 @@ from apexfx.backtest.baselines import (
     RandomStrategy,
     default_baselines,
 )
-from apexfx.backtest.comparison import ComparisonResult, StrategyScore
+from apexfx.backtest.comparison import (
+    ComparisonResult,
+    FoldComparison,
+    StrategyScore,
+    compare_across_folds,
+)
+from apexfx.backtest.engine import BacktestConfig
 from apexfx.backtest.result import MIN_MEANINGFUL_VOLATILITY, BacktestResult
+from apexfx.features.pipeline import FeaturePipeline
 
 
 def _bar(close: float, high: float | None = None, low: float | None = None) -> pd.Series:
@@ -361,3 +368,217 @@ class TestSpreadIsCharged:
             "retail MT5 on EURUSD runs 1.5-3.0 pips; a lower default flatters "
             "every backtest"
         )
+
+
+class TestFoldComparisonVerdict:
+    """One backtest number is a single draw; the gate is about the spread."""
+
+    @staticmethod
+    def _frame(model: list[float], **baselines: list[float]) -> pd.DataFrame:
+        return pd.DataFrame({"model": model, **baselines})
+
+    @staticmethod
+    def _comparison(frame: pd.DataFrame, **kwargs) -> FoldComparison:
+        return FoldComparison(
+            candidate_name="model",
+            fold_sharpe=frame,
+            fold_returns=kwargs.pop("fold_returns", {}),
+            **kwargs,
+        )
+
+    def test_win_rate_counts_folds_where_it_beat_everything(self):
+        frame = self._frame(
+            model=[1.0, 0.2, 1.5, 0.9],
+            buy_and_hold=[0.5, 0.8, 0.4, 0.1],
+            ma_cross=[0.3, 0.1, 1.6, 0.2],
+        )
+        # Fold 1 loses to buy_and_hold, fold 2 loses to ma_cross.
+        assert self._comparison(frame).win_rate == pytest.approx(0.5)
+
+    def test_the_gate_needs_a_large_majority_of_folds(self):
+        winning = self._frame(model=[1.0] * 9 + [0.0], buy_and_hold=[0.5] * 10)
+        losing = self._frame(model=[1.0] * 7 + [0.0] * 3, buy_and_hold=[0.5] * 10)
+        assert self._comparison(winning).passes_gate
+        assert not self._comparison(losing).passes_gate
+
+    def test_random_does_not_count_as_a_rival(self):
+        """Beating the cost probe proves nothing, so it cannot decide the gate."""
+        frame = self._frame(
+            model=[1.0, 1.0], buy_and_hold=[0.5, 0.5], random=[9.0, 9.0],
+        )
+        comparison = self._comparison(frame)
+        assert comparison.baseline_names == ["buy_and_hold"]
+        assert comparison.win_rate == 1.0
+
+    def test_a_sharpe_tie_is_not_a_win(self):
+        frame = self._frame(model=[0.7, 0.7], buy_and_hold=[0.7, 0.7])
+        assert self._comparison(frame).win_rate == 0.0
+
+    def test_no_folds_is_no_evidence_not_a_clean_sweep(self):
+        """Every fold can be skipped as too short; that must not pass the gate."""
+        empty = pd.DataFrame(columns=["model", "buy_and_hold"])
+        comparison = self._comparison(empty)
+        assert comparison.win_rate == 0.0
+        assert not comparison.passes_gate
+
+    def test_the_verdict_appears_in_the_summary(self):
+        frame = self._frame(model=[1.0] * 10, buy_and_hold=[0.5] * 10)
+        summary = self._comparison(frame).summary()
+        assert "PASSES" in summary
+        assert "100%" in summary
+        assert "buy_and_hold" in summary
+
+
+class TestFoldComparisonOverfitting:
+    @staticmethod
+    def _returns(n_obs: int = 400, seed: int = 0) -> dict[str, np.ndarray]:
+        rng = np.random.default_rng(seed)
+        return {
+            name: rng.normal(0.0, 0.01, n_obs)
+            for name in ("model", "buy_and_hold", "ma_cross")
+        }
+
+    @staticmethod
+    def _comparison(returns: dict[str, np.ndarray]) -> FoldComparison:
+        frame = pd.DataFrame({name: [0.0] for name in returns})
+        return FoldComparison(
+            candidate_name="model", fold_sharpe=frame, fold_returns=returns,
+        )
+
+    def test_pbo_is_reported_when_there_is_enough_history(self):
+        pbo = self._comparison(self._returns()).probability_of_overfitting()
+        assert pbo is not None
+        assert 0.0 <= pbo <= 1.0
+
+    def test_too_short_a_history_yields_no_verdict(self):
+        """Better no number than one computed from four observations."""
+        assert self._comparison(self._returns(n_obs=4)).probability_of_overfitting() is None
+
+    def test_a_single_strategy_cannot_be_selected_between(self):
+        """PBO measures a choice; with one column there was no choice to make."""
+        single = {"model": np.random.default_rng(0).normal(0, 0.01, 400)}
+        assert self._comparison(single).probability_of_overfitting() is None
+
+    def test_no_returns_at_all_yields_no_verdict(self):
+        """An all-skipped run leaves nothing to compute over — and min() over an
+        empty sequence raises, so this path needs its own guard."""
+        assert self._comparison({}).probability_of_overfitting() is None
+
+    def test_series_of_different_lengths_are_truncated_not_rejected(self):
+        """Folds get skipped per strategy, so the series can come out ragged."""
+        returns = self._returns()
+        returns["ma_cross"] = returns["ma_cross"][:250]
+        assert self._comparison(returns).probability_of_overfitting() is not None
+
+    def test_pbo_reaches_the_summary(self):
+        assert "PBO" in self._comparison(self._returns()).summary()
+
+
+class TestCompareAcrossFolds:
+    """The end-to-end path: a real engine run per fold per strategy.
+
+    The folds are computed once for the class. Each run recomputes the feature
+    pipeline over its segment, so re-running per test would cost more than the
+    rest of the unit suite combined.
+    """
+
+    N_BARS = 900
+    N_FOLDS = 3
+    WARMUP = 40
+
+    @staticmethod
+    def _bars(n: int, seed: int = 0) -> pd.DataFrame:
+        rng = np.random.default_rng(seed)
+        close = 1.10 * np.exp(np.cumsum(rng.normal(0.0, 0.001, n)))
+        return pd.DataFrame({
+            "time": pd.date_range("2024-01-01", periods=n, freq="h", tz="UTC"),
+            "open": close,
+            "high": close * 1.0005,
+            "low": close * 0.9995,
+            "close": close,
+            "volume": np.full(n, 500),
+            "spread": np.full(n, 0.0002),
+        })
+
+    @classmethod
+    def _config(cls) -> BacktestConfig:
+        # Risk sizing is bypassed for the same reason as the spread tests: the
+        # sizer rejects most signals, and a fold in which nobody traded scores
+        # every strategy at zero, which tests nothing.
+        return BacktestConfig(
+            warmup_bars=cls.WARMUP, disable_risk=True, default_volume=0.1,
+        )
+
+    @pytest.fixture(scope="class")
+    @classmethod
+    def comparison(cls) -> FoldComparison:
+        return compare_across_folds(
+            cls._bars(cls.N_BARS),
+            BuyAndHold(),
+            n_folds=cls.N_FOLDS,
+            config=cls._config(),
+            candidate_name="model",
+            baselines=[MACross(fast=5, slow=20), RandomStrategy(seed=1)],
+            pipeline=FeaturePipeline.lightweight(),
+        )
+
+    def test_every_fold_scores_every_strategy(self, comparison):
+        assert len(comparison.fold_sharpe) == self.N_FOLDS
+        assert set(comparison.fold_sharpe.columns) == {
+            "model", "ma_cross_5_20", "random",
+        }
+
+    def test_folds_are_scored_separately_not_pooled(self, comparison):
+        """Identical Sharpe on every fold would mean the segments were never
+        actually split — the spread across conditions is the whole point."""
+        assert comparison.fold_sharpe["model"].nunique() > 1
+
+    def test_returns_are_collected_for_pbo(self, comparison):
+        lengths = {name: len(r) for name, r in comparison.fold_returns.items()}
+        assert set(lengths) == set(comparison.fold_sharpe.columns)
+        assert min(lengths.values()) > 0
+
+    def test_the_verdict_is_reported_over_folds_not_one_number(self, comparison):
+        assert 0.0 <= comparison.win_rate <= 1.0
+        assert f"of {self.N_FOLDS} folds" in comparison.summary()
+
+    def test_a_fold_shorter_than_the_warmup_is_skipped(self):
+        """Otherwise it contributes an empty backtest as a zero Sharpe."""
+        comparison = compare_across_folds(
+            self._bars(self.WARMUP * 4),
+            BuyAndHold(),
+            n_folds=8,  # 20 bars per fold, under the 40-bar warmup
+            config=self._config(),
+            baselines=[MACross(fast=5, slow=20)],
+            pipeline=FeaturePipeline.lightweight(),
+        )
+        assert len(comparison.fold_sharpe) == 0
+        assert comparison.win_rate == 0.0, "a run with no folds is not a clean sweep"
+        assert not comparison.passes_gate
+
+    def test_strategies_are_reset_between_folds(self):
+        """A moving average carrying prices across a segment boundary would be
+        fitting one fold with the previous fold's data."""
+
+        class _CountingCandidate:
+            name = "model"
+
+            def __init__(self) -> None:
+                self.resets = 0
+
+            def reset(self) -> None:
+                self.resets += 1
+
+            def on_bar(self, features, bar):  # noqa: ARG002
+                return 1.0
+
+        candidate = _CountingCandidate()
+        comparison = compare_across_folds(
+            self._bars(self.N_BARS),
+            candidate,
+            n_folds=self.N_FOLDS,
+            config=self._config(),
+            baselines=[BuyAndHold()],
+            pipeline=FeaturePipeline.lightweight(),
+        )
+        assert candidate.resets == len(comparison.fold_sharpe) == self.N_FOLDS
