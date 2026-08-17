@@ -16,7 +16,10 @@ risk:
   max_drawdown_pct: 0.10          # 10% — more room for testing
 
   position_sizing:
-    max_position_pct: 0.10
+    risk_per_trade_pct: 0.01
+    max_leverage: 10.0
+    atr_stop_mult: 2.0
+    max_position_pct: 0.10        # notional cap, fallback path only (no ATR)
     kelly_fraction: 0.5
     min_trades_for_kelly: 10
 

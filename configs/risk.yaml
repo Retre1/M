@@ -5,7 +5,10 @@ var_lookback_days: 252
 var_method: historical         # historical | parametric
 
 position_sizing:
-  max_position_pct: 0.10       # 10% of portfolio max
+  risk_per_trade_pct: 0.01     # 1% of equity lost if the stop is hit
+  max_leverage: 10.0           # cap on notional / equity
+  atr_stop_mult: 2.0           # must match the stop the engine places
+  max_position_pct: 0.10       # notional cap, fallback path only (no ATR)
   kelly_fraction: 0.5          # Half-Kelly
   min_trades_for_kelly: 30     # Need 30 trades before using Kelly
   vol_lookback_bars: 20        # ATR lookback for vol scaling

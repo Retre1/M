@@ -341,6 +341,9 @@ class RiskManager:
         )
 
         self.position_sizer = PositionSizer(
+            risk_per_trade_pct=config.position_sizing.risk_per_trade_pct,
+            max_leverage=config.position_sizing.max_leverage,
+            atr_stop_mult=config.position_sizing.atr_stop_mult,
             max_position_pct=config.position_sizing.max_position_pct,
             kelly_fraction=config.position_sizing.kelly_fraction,
             min_trades_for_kelly=config.position_sizing.min_trades_for_kelly,

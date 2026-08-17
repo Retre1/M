@@ -502,6 +502,18 @@ class TrainingConfig(BaseModel):
 
 
 class PositionSizingConfig(BaseModel):
+    # Fraction of equity lost if the stop is hit. This is what governs size;
+    # max_position_pct below only applies when no stop distance is known.
+    risk_per_trade_pct: float = 0.01
+    # Cap on notional / equity, so a very tight stop cannot ask for an
+    # unbounded position.
+    max_leverage: float = 10.0
+    # Stop distance in ATR units. Must match the stop the engine places, or
+    # the position is sized against a stop nobody will use.
+    atr_stop_mult: float = 2.0
+    # Notional cap, used only on the fallback path. Read as a risk limit it is
+    # badly misleading: 10% of notional on EURUSD risks ~0.004% of equity
+    # against a 2xATR stop.
     max_position_pct: float = 0.10
     kelly_fraction: float = 0.5
     min_trades_for_kelly: int = 30
