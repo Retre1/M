@@ -23,6 +23,7 @@ import pandas as pd
 import pytest
 
 from apexfx.features.clustering import ClusteringExtractor
+from apexfx.features.fsd import FSDExtractor
 from apexfx.features.hurst import HurstExtractor
 from apexfx.features.order_flow import OrderFlowExtractor
 from apexfx.features.orderbook import OrderBookExtractor
@@ -65,6 +66,7 @@ def _bars(n: int = N_BARS) -> pd.DataFrame:
 EXTRACTORS = [
     pytest.param(VolumeProfileExtractor(window=100), id="volume_profile"),
     pytest.param(OrderFlowExtractor(), id="order_flow"),
+    pytest.param(FSDExtractor(), id="fsd"),
     pytest.param(RegimeExtractor(), id="regime"),
     pytest.param(ClusteringExtractor(window=200), id="clustering"),
     pytest.param(StructureExtractor(), id="structure"),

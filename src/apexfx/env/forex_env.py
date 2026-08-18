@@ -318,6 +318,7 @@ class ForexTradingEnv(gym.Env):
         n_time_features: int = 5,
         n_fundamental_features: int = 8,
         n_structure_features: int = 8,
+        n_fsd_features: int = 4,
         lookback: int = 100,
         reward_fn: BaseRewardFunction | None = None,
         max_drawdown_pct: float = 0.15,
@@ -353,6 +354,7 @@ class ForexTradingEnv(gym.Env):
             n_time_features=n_time_features,
             n_fundamental_features=n_fundamental_features,
             n_structure_features=n_structure_features,
+            n_fsd_features=n_fsd_features,
             lookback=lookback,
         )
 
@@ -396,6 +398,12 @@ class ForexTradingEnv(gym.Env):
                 ),
                 "structure_features": spaces.Box(
                     -np.inf, np.inf, shape=(n_structure_features,), dtype=np.float32
+                ),
+                # Cross-sectional regime signal for gating v2. Present whether
+                # or not gating v2 is on, so the observation space does not
+                # change with that switch.
+                "fsd_features": spaces.Box(
+                    -np.inf, np.inf, shape=(n_fsd_features,), dtype=np.float32
                 ),
                 "position_state": spaces.Box(-np.inf, np.inf, shape=(8,), dtype=np.float32),
             }

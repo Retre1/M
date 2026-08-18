@@ -23,6 +23,7 @@ class ObservationBuilder:
         n_time_features: int = 5,
         n_fundamental_features: int = 8,
         n_structure_features: int = 8,
+        n_fsd_features: int = 4,
         lookback: int = 100,
     ) -> None:
         self.n_market_features = n_market_features
@@ -32,6 +33,7 @@ class ObservationBuilder:
         self.n_time_features = n_time_features
         self.n_fundamental_features = n_fundamental_features
         self.n_structure_features = n_structure_features
+        self.n_fsd_features = n_fsd_features
         self.lookback = lookback
 
         # Feature column mappings
@@ -45,6 +47,12 @@ class ObservationBuilder:
             "close_zscore", "hvn_distance", "volume_profile_skew",
             "delta_pct", "delta_divergence", "regime_mean_reverting",
             "nearest_support_distance", "nearest_resistance_distance",
+        ]
+        # Exactly the four columns FSDExtractor produces and GatingV2Config
+        # expects: dispersion plus a one-hot of the regime it implies.
+        self.fsd_columns: list[str] = [
+            "fsd_dispersion", "fsd_regime_risk_on",
+            "fsd_regime_neutral", "fsd_regime_risk_off",
         ]
         self.regime_columns: list[str] = [
             "hurst_exponent", "realized_vol", "trend_strength",
@@ -127,6 +135,11 @@ class ObservationBuilder:
                                               self.structure_columns,
                                               self.n_structure_features)
 
+        # FSD features: latest values (dispersion + regime one-hot)
+        fsd_data = self._extract_latest(features, current_idx,
+                                        self.fsd_columns,
+                                        self.n_fsd_features)
+
         # Time features: sinusoidal encoding for each step in lookback
         time_data = np.zeros((self.lookback, self.n_time_features), dtype=np.float32)
         for i, idx in enumerate(range(start_idx, current_idx + 1)):
@@ -157,6 +170,7 @@ class ObservationBuilder:
             "regime_features": regime_data,
             "fundamental_features": fundamental_data,
             "structure_features": structure_data,
+            "fsd_features": fsd_data,
             "position_state": position_state,
         }
 

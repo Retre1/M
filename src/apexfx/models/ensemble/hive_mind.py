@@ -45,6 +45,10 @@ class HiveMindOutput:
     tft_attention: torch.Tensor       # attention weight matrices
     variable_importance: torch.Tensor  # TFT variable importance scores
     encoded_state: torch.Tensor       # (batch, d_model) — TFT encoded state
+    # Entropy / diversity / confidence, produced by HiveMindGating_v2 only.
+    # Run 1 collapsed the gating to entropy 0.031; these are what make that
+    # visible while it happens rather than afterwards in the logs.
+    gating_diagnostics: dict[str, torch.Tensor] | None = None
 
 
 class HiveMind(nn.Module):
@@ -70,6 +74,11 @@ class HiveMind(nn.Module):
         # Cross-Agent Attention params
         d_cross_attn: int = 64,
         n_cross_attn_heads: int = 2,
+        # Gating v2: FSD-conditioned, with entropy regularisation against the
+        # collapse seen in run 1. Off by default because it needs an
+        # fsd_features channel; see forward().
+        use_gating_v2: bool = False,
+        gating_v2_config=None,
     ) -> None:
         super().__init__()
 
@@ -120,12 +129,27 @@ class HiveMind(nn.Module):
 
         # --- Gating Network (Meta-Controller) ---
         # Gating sees regime + fundamental features for news-aware decisions
-        self.gating = GatingNetwork(
-            d_regime=d_regime_features + d_fundamental_features,
-            d_context=d_model,
-            n_agents=3,
-            dropout=dropout,
-        )
+        self.use_gating_v2 = use_gating_v2
+        if use_gating_v2:
+            from apexfx.models.config import GatingV2Config
+            from apexfx.models.gating_v2 import HiveMindGating_v2
+
+            cfg = gating_v2_config or GatingV2Config(
+                d_regime=d_regime_features + d_fundamental_features,
+                d_context=d_model,
+                n_agents=3,
+                dropout=dropout,
+            )
+            self.d_fsd = cfg.d_fsd
+            self.gating = HiveMindGating_v2(cfg)
+        else:
+            self.d_fsd = 0
+            self.gating = GatingNetwork(
+                d_regime=d_regime_features + d_fundamental_features,
+                d_context=d_model,
+                n_agents=3,
+                dropout=dropout,
+            )
 
     def forward(
         self,
@@ -137,6 +161,7 @@ class HiveMind(nn.Module):
         breakout_features: torch.Tensor | None = None,
         fundamental_features: torch.Tensor | None = None,
         structure_features: torch.Tensor | None = None,
+        fsd_features: torch.Tensor | None = None,
     ) -> HiveMindOutput:
         """Full forward pass with cross-agent communication.
 
@@ -198,13 +223,29 @@ class HiveMind(nn.Module):
         agent_outputs = torch.cat(
             [trend_action, reversion_action, breakout_action], dim=-1,
         )
-        gating_weights, combined_action = self.gating(
-            gating_regime, tft_out.encoded_state, agent_outputs,
-        )
+        diagnostics = None
+        if self.use_gating_v2:
+            if fsd_features is None:
+                # Feeding zeros here would leave the FSD stream a constant
+                # input — the exact "wired but inert" state this gating was
+                # enabled to escape. Better to fail where it is fixable.
+                raise ValueError(
+                    "gating v2 is enabled but no fsd_features were supplied; "
+                    "the FSD stream would be a constant and the conditioning "
+                    "it exists for would do nothing",
+                )
+            gating_weights, combined_action, diagnostics = self.gating(
+                gating_regime, tft_out.encoded_state, agent_outputs, fsd_features,
+            )
+        else:
+            gating_weights, combined_action = self.gating(
+                gating_regime, tft_out.encoded_state, agent_outputs,
+            )
 
         self._cached_gating_weights = gating_weights
 
         return HiveMindOutput(
+            gating_diagnostics=diagnostics,
             action=combined_action,
             trend_action=trend_action,
             reversion_action=reversion_action,
@@ -288,6 +329,7 @@ class HiveMindExtractor(BaseFeaturesExtractor):
             breakout_features=breakout,
             fundamental_features=fundamental,
             structure_features=structure,
+            fsd_features=observations.get("fsd_features"),
         )
 
         features = torch.cat([

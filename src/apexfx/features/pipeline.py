@@ -10,6 +10,7 @@ import pandas as pd
 from apexfx.features import BaseFeatureExtractor
 from apexfx.features.clustering import ClusteringExtractor
 from apexfx.features.dim_reducer import BaseDimReducer
+from apexfx.features.fsd import FSDExtractor
 from apexfx.features.fundamental import FundamentalExtractor
 from apexfx.features.hurst import HurstExtractor
 from apexfx.features.intermarket_corr import IntermarketCorrExtractor
@@ -72,6 +73,9 @@ class FeaturePipeline:
             HurstExtractor(window=252),
             SpectralExtractor(fft_window=256),
             IntermarketCorrExtractor(),
+            # Cross-sectional dispersion over the intermarket basket. Emits
+            # zeros and warns when no basket is merged — see features/fsd.py.
+            FSDExtractor(),
             RegimeExtractor(),
             ClusteringExtractor(window=200),
             FundamentalExtractor(),
