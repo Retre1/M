@@ -141,7 +141,10 @@ class HybridDynamics(nn.Module):
         else:
             out = stacked.mean(dim=1)
 
-        return out
+        # The residual projection was allocated and never applied, so its
+        # parameters got no gradient. Applied here to match the shape every
+        # individual backend uses: next_z = residual(z) + predicted delta.
+        return out + self.residual(z)
 
 
 # ── WorldModelHybrid ─────────────────────────────────────────────────

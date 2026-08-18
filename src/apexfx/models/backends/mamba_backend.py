@@ -58,9 +58,7 @@ class SelectiveSSM(nn.Module):
         Returns:
             (batch, d_inner) output.
         """
-        x.shape[0]
-
-        # Project to get dt, B, C (input-dependent)
+        # Project to get dt, B, C (input-dependent — this is the "selective" part)
         x_dbl = self.x_proj(x)
         dt_rank = x_dbl.shape[-1] - self.d_state * 2
         dt, B, C = torch.split(x_dbl, [dt_rank, self.d_state, self.d_state], dim=-1)
@@ -69,16 +67,28 @@ class SelectiveSSM(nn.Module):
         dt = F.softplus(self.dt_proj(dt))
 
         # Discretise: A_bar = exp(A * dt), B_bar = B * dt
-        A = -torch.exp(self.A_log)  # (d_inner, d_state)
-        torch.exp(A.unsqueeze(0) * dt.unsqueeze(-1))  # (batch, d_inner, d_state)
+        A = -torch.exp(self.A_log)  # (d_inner, d_state), strictly negative
+        A_bar = torch.exp(A.unsqueeze(0) * dt.unsqueeze(-1))  # (batch, d_inner, d_state)
         B_bar = B.unsqueeze(1) * dt.unsqueeze(-1)  # (batch, d_inner, d_state)
 
-        # Single-step state update (no sequence dimension — used per-step in dynamics)
-        # h = A_bar * h_prev + B_bar * x  (elementwise for diagonal A)
-        # For single-step: just compute the output projection
-        # y = C @ (B_bar * x_expanded) + D * x
+        # The dynamics backend is called one step at a time — (z_t, a_t) → z_t+1 —
+        # so there is no h_{t-1} to carry. Rather than drop A entirely, the state
+        # is taken at the fixed point of h = A_bar·h + B_bar·x under a held
+        # input, i.e. the sum of the geometric series:
+        #
+        #     h = B_bar · x / (1 - A_bar)
+        #
+        # A_bar lies in (0, 1) because A < 0 and dt > 0, so the series converges
+        # and A_bar sets the effective memory horizon: near 1 accumulates, near 0
+        # responds only to the current step.
+        #
+        # This previously computed A_bar and discarded it, leaving y independent
+        # of A. Shifting A_log by +10 changed the output by exactly zero — the
+        # state matrix was an untrained parameter with no path to the loss, and
+        # the "selective state space" backend was a gated linear map.
         x_expanded = x.unsqueeze(-1).expand(-1, -1, self.d_state)
-        y = (C.unsqueeze(1) * B_bar * x_expanded).sum(dim=-1) + self.D * x
+        h = (B_bar * x_expanded) / (1.0 - A_bar).clamp_min(1e-4)
+        y = (C.unsqueeze(1) * h).sum(dim=-1) + self.D * x
 
         return y
 

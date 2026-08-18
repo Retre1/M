@@ -409,6 +409,12 @@ class AdversarialConfig(BaseModel):
 class WorldModelConfig(BaseModel):
     """Learned dynamics model for model-based planning and curiosity."""
     enabled: bool = True
+    # Dynamics backbone. "mamba" is a selective state-space model, the default
+    # and the one suited to sequential price data; "tensor_network" contracts an
+    # MPS; "quantum_feature_map" uses a quantum-inspired kernel; "hybrid" learns
+    # a mixture of the others. Every one of them adds parameters, which is a
+    # real cost on a 12k-bar dataset — see docs/training-strategy.md.
+    backend: str = "mamba"
     d_latent: int = 32
     d_hidden: int = 128
     n_ensemble: int = 5

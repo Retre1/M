@@ -83,6 +83,7 @@ adversarial:
 # World Model
 world_model:
   enabled: true
+  backend: mamba                  # mamba | tensor_network | quantum_feature_map | hybrid
   d_latent: 64                    # 32→64: richer latent space
   d_hidden: 256                   # 128→256: larger dynamics model
   n_ensemble: 7                   # 5→7: better uncertainty (odd for majority vote)

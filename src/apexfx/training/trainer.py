@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import multiprocessing as mp
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
@@ -66,6 +67,35 @@ HOLDOUT_FRACTION = 0.3
 # windows up to 252 bars, and FeatureSelector labels a bar by the *next* bar's
 # direction; without a gap the last training rows carry holdout information.
 HOLDOUT_PURGE_BARS = 300
+
+if TYPE_CHECKING:
+    from apexfx.models.config import WorldModelHybridConfig
+
+
+def build_world_model_config(wm_cfg) -> WorldModelHybridConfig:
+    """Translate the app-level world-model settings into the model's own config.
+
+    ``WorldModelCallback`` takes ``(d_features, config)``. The call site used to
+    pass the training knobs as keyword arguments, which the v2 signature does
+    not accept — and because ``world_model.enabled`` defaults to True, building
+    the callback list raised TypeError on every run, so the world model and
+    every dynamics backend behind it were unreachable. The two halves came from
+    different branches; nothing caught it because no test built the callback
+    list. That is what this function exists to make testable.
+    """
+    from apexfx.models.config import BackendType, WorldModelHybridConfig
+
+    return WorldModelHybridConfig(
+        backend=BackendType(wm_cfg.backend),
+        d_latent=wm_cfg.d_latent,
+        d_hidden=wm_cfg.d_hidden,
+        n_ensemble=wm_cfg.n_ensemble,
+        update_freq=wm_cfg.update_freq,
+        batch_size=wm_cfg.batch_size,
+        lr=wm_cfg.lr,
+        curiosity_weight=wm_cfg.curiosity_weight,
+        imagination_horizon=wm_cfg.imagination_horizon,
+    )
 
 
 class Trainer:
@@ -1197,11 +1227,7 @@ class Trainer:
             callbacks.append(
                 WorldModelCallback(
                     d_features=d_features,
-                    update_freq=wm_cfg.update_freq,
-                    batch_size=wm_cfg.batch_size,
-                    lr=wm_cfg.lr,
-                    curiosity_weight=wm_cfg.curiosity_weight,
-                    imagination_horizon=wm_cfg.imagination_horizon,
+                    config=build_world_model_config(wm_cfg),
                 )
             )
             logger.info(
