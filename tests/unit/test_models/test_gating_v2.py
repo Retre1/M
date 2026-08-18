@@ -39,11 +39,16 @@ def _basket(n: int = 800, n_instruments: int = 4) -> pd.DataFrame:
 
 
 class TestFSDNeedsABasket:
-    def test_one_instrument_produces_a_constant_and_says_so(self, caplog):
-        """The whole reason gating v2 was not simply switched on."""
+    def test_one_instrument_produces_a_constant_and_says_so(self, capsys):
+        """The whole reason gating v2 was not simply switched on.
+
+        ``capsys``, not ``caplog``: structlog writes to stdout, so the stdlib
+        capture sees nothing and an assertion against it would pass on an empty
+        string — which is what the first version of this test did.
+        """
         out = FSDExtractor().extract(_basket(n_instruments=1))
         assert out["fsd_dispersion"].nunique() == 1
-        assert "basket" in caplog.text.lower() or out["fsd_dispersion"].eq(0).all()
+        assert "basket" in capsys.readouterr().out.lower()
 
     def test_a_basket_produces_a_varying_signal(self):
         out = FSDExtractor().extract(_basket())

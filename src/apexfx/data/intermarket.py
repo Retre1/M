@@ -356,3 +356,71 @@ class IntermarketDataProvider:
             )
 
         return stats
+
+
+def merge_intermarket_columns(
+    bars: pd.DataFrame,
+    instruments: list[str],
+    data_dir: Path | str,
+    timeframe: str = "H1",
+) -> tuple[pd.DataFrame, list[str]]:
+    """Attach ``{instrument}_close`` columns from the cached Parquet store.
+
+    Two feature groups are useless without this and neither says so on its own:
+    ``IntermarketCorrExtractor`` produces 28 columns that need the other
+    instruments' closes, and ``FSDExtractor`` measures dispersion *across*
+    instruments, so with one series it is identically zero by construction.
+
+    Returns the frame alongside the instruments actually merged, so callers can
+    tell "no basket configured" from "configured but the files are missing" —
+    the second used to be indistinguishable from success.
+    """
+    if not instruments:
+        return bars, []
+
+    root = Path(data_dir) / "processed"
+    merged = bars.copy()
+    attached: list[str] = []
+
+    for instrument in instruments:
+        parquet_path = root / instrument / timeframe / "data.parquet"
+        if not parquet_path.exists():
+            logger.debug(
+                "Intermarket file absent", instrument=instrument, path=str(parquet_path),
+            )
+            continue
+        try:
+            idf = pd.read_parquet(parquet_path)
+        except Exception as exc:  # noqa: BLE001 — a bad file must not kill training
+            logger.warning(
+                "Intermarket file unreadable", instrument=instrument, error=str(exc),
+            )
+            continue
+        if "close" not in idf.columns or "time" not in idf.columns:
+            logger.warning(
+                "Intermarket file lacks time/close", instrument=instrument,
+            )
+            continue
+
+        idf = idf[["time", "close"]].rename(columns={"close": f"{instrument}_close"})
+        merged = merged.merge(idf, on="time", how="left")
+        attached.append(instrument)
+        logger.debug(
+            "Intermarket merged",
+            instrument=instrument,
+            n_matched=int(merged[f"{instrument}_close"].notna().sum()),
+        )
+
+    if not attached:
+        # Warning, not debug: the run continues and the affected features
+        # quietly become constants, which is the failure mode that looks like
+        # everything working.
+        logger.warning(
+            "No intermarket data merged — correlation features will be "
+            "degenerate and FSD dispersion will be identically zero",
+            requested=instruments,
+            searched=str(root),
+        )
+        return merged, attached
+
+    return merged.ffill(), attached

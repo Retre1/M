@@ -368,16 +368,41 @@ class TrainerV2:
         self._real_data = real_data
         self._multi_symbol_data = multi_symbol_data or {}
 
+        # The holdout is reserved here, before the curriculum ever sees the
+        # data. Trainer got this and TrainerV2 did not, and TrainerV2 is what
+        # scripts/train_v2.py runs — so without it the next run would train on
+        # every bar and any "out-of-sample" evaluation would repeat exactly the
+        # in-sample result that invalidated runs 1-6.
+        from apexfx.training.trainer import Trainer as _Trainer
+
+        self._train_data, self._holdout_start = _Trainer._split_holdout(real_data)
+        self._multi_symbol_data = {
+            symbol: _Trainer._split_holdout(frame)[0]
+            for symbol, frame in self._multi_symbol_data.items()
+        }
+
         ckpt_dir = checkpoint_dir or Path("models/v2_checkpoints")
         self._curriculum = CurriculumV2(
             config=self._curriculum_config,
-            real_data=real_data,
+            real_data=self._train_data,
             checkpoint_dir=ckpt_dir,
         )
 
         self._model: Any = None
         self._device = self._resolve_device()
         self._active_curriculum_cb: CurriculumV2Callback | None = None
+
+    @property
+    def holdout_data(self) -> pd.DataFrame | None:
+        """Bars withheld from training, for an evaluation that means something.
+
+        None when the history was too short to reserve one — in which case
+        there is no honest out-of-sample slice to evaluate on, and saying so
+        beats scoring the agent on bars it trained on.
+        """
+        if self._real_data is None or self._holdout_start is None:
+            return None
+        return self._real_data.iloc[self._holdout_start:].reset_index(drop=True)
         self._feature_pipeline: Any = None  # lazy init
         self._feature_required_columns = (
             "hurst_exponent", "trend_strength", "close_zscore",
@@ -499,11 +524,35 @@ class TrainerV2:
             from apexfx.training.trainer import FeaturePipeline
             self._feature_pipeline = FeaturePipeline()
 
+        # The basket has to be attached before features are computed:
+        # IntermarketCorrExtractor reads {inst}_close, and FSDExtractor
+        # measures dispersion across instruments, which on a single series is
+        # identically zero. Trainer merged and TrainerV2 did not, so in the v2
+        # path both feature groups were silently inert.
+        enriched = self._merge_intermarket(df)
+
         logger.info(
             "Computing features for stage env",
-            n_bars=len(df), missing=missing,
+            n_bars=len(enriched), missing=missing,
         )
-        return self._feature_pipeline.compute(df)
+        return self._feature_pipeline.compute(enriched)
+
+    def _merge_intermarket(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Attach the intermarket basket, when one is configured."""
+        if self._app_config is None:
+            logger.debug("No app config — intermarket merge skipped")
+            return df
+
+        from apexfx.data.intermarket import merge_intermarket_columns
+
+        merged, attached = merge_intermarket_columns(
+            df,
+            list(self._app_config.symbols.intermarket),
+            self._app_config.base.paths.data_dir,
+        )
+        if attached:
+            logger.info("Intermarket basket attached", instruments=attached)
+        return merged
 
     def _build_stage_env(self, stage_data: StageDataV2) -> Any:
         """Build a (possibly parallel) vec-env for a stage.

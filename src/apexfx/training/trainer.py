@@ -481,47 +481,21 @@ class Trainer:
         logger.info("Walk-forward results saved", path=str(results_path))
 
     def _merge_intermarket(self, bars: pd.DataFrame, timeframe: str = "H1") -> pd.DataFrame:
-        """Merge intermarket data (DXY, Gold, US10Y, SPX) into bars DataFrame.
+        """Attach the intermarket basket before features are computed.
 
-        This enables IntermarketCorrExtractor to compute real correlation
-        features instead of returning NaN.
+        Delegates to ``merge_intermarket_columns`` so the v2 trainer runs the
+        identical path — it previously had no merge at all, which left its
+        correlation features degenerate and FSD dispersion at zero.
         """
-        intermarket_symbols = self._config.symbols.intermarket
-        if not intermarket_symbols:
-            return bars
+        from apexfx.data.intermarket import merge_intermarket_columns
 
-        try:
-            from apexfx.data.intermarket import IntermarketDataProvider
-
-            IntermarketDataProvider()  # No MT5 in training — uses fallback
-
-            # Try loading cached intermarket data from Parquet
-            from pathlib import Path
-
-            data_dir = Path(self._config.base.paths.data_dir) / "processed"
-
-            merged = bars.copy()
-            for instrument in intermarket_symbols:
-                parquet_path = data_dir / instrument / timeframe / "data.parquet"
-                if parquet_path.exists():
-                    idf = pd.read_parquet(parquet_path)
-                    if "close" in idf.columns and "time" in idf.columns:
-                        idf = idf[["time", "close"]].rename(
-                            columns={"close": f"{instrument}_close"}
-                        )
-                        merged = merged.merge(idf, on="time", how="left")
-                        logger.debug(
-                            "Intermarket data merged for training",
-                            instrument=instrument,
-                            n_matched=merged[f"{instrument}_close"].notna().sum(),
-                        )
-
-            merged = merged.ffill()
-            return merged
-
-        except Exception as e:
-            logger.debug("Intermarket merge skipped in training", error=str(e))
-            return bars
+        merged, _attached = merge_intermarket_columns(
+            bars,
+            list(self._config.symbols.intermarket),
+            self._config.base.paths.data_dir,
+            timeframe,
+        )
+        return merged
 
     def _train_single_tf_stage(self, stage_data, *, override_timesteps: int | None = None) -> None:
         """Train a single-timeframe stage (original behavior)."""
