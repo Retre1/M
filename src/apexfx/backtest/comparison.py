@@ -421,6 +421,15 @@ class FoldComparison:
                 f"No fold reached {self.min_trades_per_fold} trades "
                 f"({n_folds} folds run) — there is no evidence here either way.",
             )
+            # PBO is computed from bar returns and does not depend on the trade
+            # floor, so it survives a run that produced no verdict. Reported
+            # here rather than suppressed: it is a diagnostic on the return
+            # series, not a claim about the candidate.
+            pbo = self.probability_of_overfitting()
+            if pbo is not None:
+                lines += ["", f"PBO {pbo:.3f} over the baseline set "
+                              f"({'acceptable' if pbo < 0.5 else 'SELECTING NOISE'}) "
+                              f"— not a search-overfitting number, see docstring"]
             return "\n".join(lines)
 
         t, p = self.t_statistic, self.p_value

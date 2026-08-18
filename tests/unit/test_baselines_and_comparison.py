@@ -594,6 +594,23 @@ class TestFoldComparisonOverfitting:
     def test_pbo_reaches_the_summary(self):
         assert "PBO" in self._comparison(self._returns()).summary()
 
+    def test_pbo_survives_a_run_that_produced_no_verdict(self):
+        """The realistic thin-fold case: no fold clears the trade floor, so
+        there is no verdict — but PBO is computed from bar returns and does not
+        depend on the trade count, so suppressing it would lose a diagnostic
+        that is still valid."""
+        returns = self._returns()
+        thin = FoldComparison(
+            candidate_name="model",
+            fold_sharpe=pd.DataFrame({name: [0.0] for name in returns}),
+            fold_returns=returns,
+            fold_trade_r={name: [np.zeros(3)] for name in returns},
+        )
+        summary = thin.summary()
+        assert thin.evaluable_folds == []
+        assert "no evidence here either way" in summary
+        assert "PBO" in summary
+
 
 class TestCompareAcrossFolds:
     """The end-to-end path: a real engine run per fold per strategy.
