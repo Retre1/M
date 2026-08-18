@@ -104,9 +104,23 @@ class RARARewardV5Config(BaseModel, frozen=True):
         cvar_min_samples: Minimum samples before CVaR activates.
     """
 
-    # --- Core PnL (from v4, retuned) ---
-    realized_pnl_weight: float = 4_000.0
-    unrealized_delta_weight: float = 500.0
+    # --- Core PnL (from v4, retuned again after the sizing change) ---
+    #
+    # Both weights multiply a *fraction of equity*, so they move with position
+    # size. Routing the env through PositionSizer raised the median position
+    # from 0.091 lots to 1.23 — measured, ×13.5 — which would have scaled these
+    # two terms by 13.5 while trade_cost_weight and the inactivity ramp stayed
+    # flat constants. Two consequences, neither of them the Run 4 failure:
+    # the anti-idling pressure would have become negligible rather than
+    # dominant, and reward_clip would have gone from unreachable to binding on
+    # any move past ~100 pips, truncating exactly the outcomes worth learning
+    # from.
+    #
+    # Divided by the measured factor so a trade produces the same reward it did
+    # before, keeping every flat term calibrated against it. The 8:1 ratio
+    # between realized and unrealized is preserved.
+    realized_pnl_weight: float = 300.0
+    unrealized_delta_weight: float = 37.5
     trade_cost_weight: float = 0.15
     inactivity_weight: float = 0.00005
     inactivity_grace: int = 30

@@ -344,16 +344,15 @@ class TestSpreadIsCharged:
         assert trade.pnl == pytest.approx(-self._reported_commission(config), rel=1e-6)
 
     def _reported_commission(self, config) -> float:
-        """Commission visible in ``trade.pnl`` — the close leg only.
+        """Commission visible in ``trade.pnl`` — both legs.
 
-        The engine deducts the entry commission straight from equity and only
-        the exit commission from ``trade.pnl``. Account equity is therefore
-        right, but the per-trade figure understates the round trip by one
-        commission — and profit_factor is computed from those trade P&Ls.
-        Pinned here rather than changed: correcting it means moving both legs
-        into the close, which is a change to trade accounting.
+        This used to report the close leg only: the entry commission came out
+        of equity at open and never reached ``trade.pnl``, so every round trip
+        looked one commission cheaper than it was. Equity was right and the
+        per-trade figure was not, which mattered because profit_factor — a
+        gate-2 metric — is computed from those trade P&Ls.
         """
-        return self.VOLUME * config.commission_per_lot
+        return 2 * self.VOLUME * config.commission_per_lot
 
     def test_cost_scales_with_the_spread(self):
         narrow, _ = self._round_trip(spread_pips=1.0)
@@ -361,6 +360,39 @@ class TestSpreadIsCharged:
 
         per_pip = config.pip_value * self.VOLUME * config.contract_size
         assert (narrow.pnl - wide.pnl) == pytest.approx(2 * per_pip, rel=1e-6)
+
+    def test_equity_moves_by_exactly_the_reported_trade_pnl(self):
+        """The invariant the split legs broke.
+
+        The entry commission left equity at open and never reached
+        ``trade.pnl``, so the account and the trade report disagreed by one
+        commission on every round trip — and profit_factor is built from the
+        trade side.
+        """
+        from apexfx.backtest.engine import BacktestConfig, BacktestEngine
+
+        class _OneRoundTrip:
+            def __init__(self) -> None:
+                self._i = 0
+
+            def on_bar(self, features, bar):  # noqa: ARG002
+                self._i += 1
+                return 1.0 if 40 <= self._i < 80 else 0.0
+
+        config = BacktestConfig(
+            warmup_bars=20, spread_pips=2.0, slippage_pips=0.0,
+            disable_risk=True, default_volume=self.VOLUME,
+        )
+        result = BacktestEngine(
+            bars=self._flat_bars(self.N_BARS, self.FLAT_PRICE),
+            strategy=_OneRoundTrip(),
+            config=config,
+        ).run()
+
+        assert len(result.trades) == 1
+        # equity_curve holds (timestamp, equity) pairs.
+        equity_change = result.equity_curve[-1][1] - config.initial_equity
+        assert equity_change == pytest.approx(result.trades[0].pnl, rel=1e-9)
 
     def test_default_config_charges_a_retail_spread(self):
         from apexfx.backtest.engine import BacktestConfig

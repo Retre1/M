@@ -388,16 +388,21 @@ class BacktestEngine:
             * self._config.contract_size
         )
 
-        # Deduct close commission
-        commission = self._position.volume * self._config.commission_per_lot
-        pnl -= commission
+        # Commission is charged per leg. The entry leg already came out of
+        # equity when the position opened, so only the exit leg moves equity
+        # here — but the *trade* cost both, and profit_factor is computed from
+        # trade P&L. Reporting one leg understated every round trip by
+        # commission_per_lot * volume and flattered the gate-2 metric.
+        commission_per_leg = self._position.volume * self._config.commission_per_lot
+        equity_delta = pnl - commission_per_leg
+        round_trip_pnl = pnl - 2 * commission_per_leg
 
-        # Update equity
-        self._equity += pnl
+        # Update equity: the entry leg was deducted at open, not here.
+        self._equity += equity_delta
 
-        # Compute pnl_pct relative to equity at entry
-        entry_equity = self._equity - pnl  # Approximate equity at entry
-        pnl_pct = pnl / entry_equity if entry_equity > 0 else 0.0
+        # Return on the equity the trade was opened against.
+        entry_equity = self._equity - equity_delta
+        pnl_pct = round_trip_pnl / entry_equity if entry_equity > 0 else 0.0
 
         trade = Trade(
             entry_time=self._position.entry_time,
@@ -407,16 +412,18 @@ class BacktestEngine:
             entry_price=self._position.entry_price,
             exit_price=exit_price,
             volume=self._position.volume,
-            pnl=pnl,
+            pnl=round_trip_pnl,
             pnl_pct=pnl_pct,
-            commission=commission * 2,  # round-trip
+            commission=2 * commission_per_leg,  # round-trip
             bars_held=bar_idx - self._position.entry_bar_idx,
             exit_reason=reason,
             risk_amount=self._position.initial_risk,
         )
 
         self._result.record_trade(trade)
-        self._risk_manager.record_trade(pnl, pnl_pct)
+        # Kelly statistics are about the economics of the trade, so they take
+        # the round trip rather than the equity movement at close.
+        self._risk_manager.record_trade(round_trip_pnl, pnl_pct)
 
         logger.debug(
             "Trade closed",

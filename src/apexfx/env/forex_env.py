@@ -31,6 +31,7 @@ from apexfx.env.reward import (
     TradingReward,
 )
 from apexfx.env.reward_v5 import RARAReward_v5
+from apexfx.risk.position_sizer import PositionSizer
 
 
 class SpreadModel:
@@ -328,12 +329,28 @@ class ForexTradingEnv(gym.Env):
         max_position_layers: int = 3,
         breakeven_atr_mult: float = 1.5,
         partial_fill_model: PartialFillModel | None = None,
+        risk_per_trade_pct: float = 0.01,
+        max_leverage: float = 10.0,
+        atr_stop_mult: float = 2.0,
     ) -> None:
         super().__init__()
 
         self._data = data
         self._initial_balance = initial_balance
         self._max_position_pct = max_position_pct
+        # The env used to size positions itself, as a share of notional:
+        #   max_lots = equity * max_position_pct / (price * contract_size)
+        # which on EURUSD is 0.09 lots and risks ~0.02% of equity against a
+        # 2xATR stop. The backtest went through PositionSizer and the env did
+        # not, so the agent was trained on one exposure scale and measured on
+        # another. Same sizer on both sides now.
+        self._position_sizer = PositionSizer(
+            max_position_pct=max_position_pct,
+            contract_size=contract_size,
+            risk_per_trade_pct=risk_per_trade_pct,
+            max_leverage=max_leverage,
+            atr_stop_mult=atr_stop_mult,
+        )
         self._base_transaction_cost = transaction_cost_pips * pip_value
         self._pip_value = pip_value
         self._contract_size = contract_size
@@ -736,10 +753,15 @@ class ForexTradingEnv(gym.Env):
             target_size = 0.0
         else:
             target_direction = 1 if action > 0 else -1
-            max_lots = (self._portfolio_value * self._max_position_pct) / (
-                current_price * self._contract_size
+            target_size = self._position_sizer.compute(
+                action=action,
+                portfolio_value=self._portfolio_value,
+                current_price=float(current_price),
+                current_atr=self._get_current_atr(),
+                historical_atr=self._historical_atr,
             )
-            target_size = abs(action) * max_lots
+            if target_size <= 0.0:
+                target_direction = 0
 
         # Close existing position if direction changes
         if self._position_direction != 0 and target_direction != self._position_direction:
@@ -805,6 +827,8 @@ class ForexTradingEnv(gym.Env):
         notional = self._entry_price * self._position * self._contract_size
         trade_return = pnl / (notional + 1e-10)
         self._trade_returns.append(trade_return)
+        # Without this the sizer never leaves its warm-up quarter-Kelly.
+        self._position_sizer.update_trade_stats(trade_return)
 
         # Reset position state
         self._position = 0.0
