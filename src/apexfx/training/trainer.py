@@ -57,6 +57,16 @@ from apexfx.utils.metrics import compute_all_metrics
 
 logger = get_logger(__name__)
 
+# Fraction of history withheld from training and used only for the
+# post-training backtest. Before this existed, the curriculum trained on every
+# bar and the backtest then evaluated "the last 30%" of the same bars, which is
+# an in-sample result labelled out-of-sample.
+HOLDOUT_FRACTION = 0.3
+# Bars dropped between the training data and the holdout. Features use rolling
+# windows up to 252 bars, and FeatureSelector labels a bar by the *next* bar's
+# direction; without a gap the last training rows carry holdout information.
+HOLDOUT_PURGE_BARS = 300
+
 
 class Trainer:
     """
@@ -73,6 +83,10 @@ class Trainer:
     def __init__(self, config: AppConfig, real_data: pd.DataFrame | None = None) -> None:
         self._config = config
         self._real_data = real_data
+        # Training never sees the holdout. The feature selector is fitted inside
+        # training, so this is also what keeps its forward-return labels off the
+        # evaluation slice.
+        self._train_data, self._holdout_start = self._split_holdout(real_data)
         self._feature_pipeline = FeaturePipeline()
         self._feature_selector = FeatureSelector(top_n=15)
         self._device = self._resolve_device()
@@ -113,6 +127,44 @@ class Trainer:
                 lambda_ewc=ewc_cfg.lambda_ewc,
                 gamma_ewc=ewc_cfg.gamma_ewc,
             )
+
+    @staticmethod
+    def _split_holdout(
+        data: pd.DataFrame | None,
+    ) -> tuple[pd.DataFrame | None, int | None]:
+        """Split off the evaluation holdout before any training touches the data.
+
+        Returns ``(train_data, holdout_start_idx)`` where the index refers to
+        the *original* frame, so the backtest can compute features over the full
+        series — rolling features are causal, and recomputing them from the
+        holdout's first bar would only add a warm-up artefact — and then slice.
+
+        The gap between the two is ``HOLDOUT_PURGE_BARS``: rolling windows and
+        the selector's next-bar label both reach forward from the last training
+        row, so adjacent slices are not actually disjoint in information.
+        """
+        if data is None or len(data) == 0:
+            return data, None
+
+        holdout_start = int(len(data) * (1.0 - HOLDOUT_FRACTION))
+        train_end = holdout_start - HOLDOUT_PURGE_BARS
+
+        if train_end <= 0:
+            logger.warning(
+                "Not enough bars to hold out an evaluation slice — training on "
+                "everything and skipping the post-training backtest",
+                n_bars=len(data),
+                needed=int(HOLDOUT_PURGE_BARS / (1.0 - HOLDOUT_FRACTION)) + 1,
+            )
+            return data, None
+
+        logger.info(
+            "Holdout reserved",
+            train_bars=train_end,
+            purged_bars=HOLDOUT_PURGE_BARS,
+            holdout_bars=len(data) - holdout_start,
+        )
+        return data.iloc[:train_end].reset_index(drop=True), holdout_start
 
     def _resolve_device(self) -> str:
         dev = self._config.base.device.value
@@ -239,7 +291,7 @@ class Trainer:
 
         curriculum = CurriculumManager(
             config=self._config.training,
-            real_data=self._real_data,
+            real_data=self._train_data,
             seed=self._config.base.seed,
             mtf_enabled=self._mtf_enabled,
         )
@@ -1186,6 +1238,13 @@ class Trainer:
             logger.warning("No model to backtest — skipping")
             return
 
+        if self._holdout_start is None:
+            logger.warning(
+                "No holdout was reserved — skipping the post-training backtest. "
+                "Evaluating on bars the agent trained on would not be a test.",
+            )
+            return
+
         if self._real_data is None or self._real_data.empty:
             logger.warning("No real data available for backtest — skipping")
             return
@@ -1205,10 +1264,13 @@ class Trainer:
             else:
                 n_features = min(self._feature_pipeline.n_features, 30)
 
-            # Split: last 30% for out-of-sample test
-            split_idx = int(len(features) * 0.7)
+            # The holdout reserved in __init__ — bars training never saw.
+            split_idx = self._holdout_start
             test_data = features.iloc[split_idx:].reset_index(drop=True)
-            logger.info("Test data", n_bars=len(test_data), split="last 30%")
+            logger.info(
+                "Test data", n_bars=len(test_data), holdout_start=split_idx,
+                purged_bars=HOLDOUT_PURGE_BARS,
+            )
 
             if len(test_data) < 50:
                 logger.warning("Too few test bars for reliable backtest", n_bars=len(test_data))
