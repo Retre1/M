@@ -55,6 +55,35 @@ class Trade:
     slippage: float = 0.0
     bars_held: int = 0
     exit_reason: str = ""  # "signal", "stop_loss", "take_profit", "risk_close"
+    # Money at risk when the position was opened, from the *initial* stop.
+    # Trailing moves the stop, so the live stop cannot be used: R has to be
+    # measured against what was actually risked at entry. Zero when no stop
+    # was placed (no ATR yet), which leaves R undefined for that trade.
+    risk_amount: float = 0.0
+
+    @property
+    def r_multiple(self) -> float | None:
+        """P&L in units of the risk taken, or None when nothing was at risk.
+
+        R is the unit that makes trades comparable across volatility regimes
+        and position sizes — a $200 win on $100 risked and a $20 win on $10
+        risked are the same result. Profit factor cannot say that, which is
+        why the gate reads R and not PF.
+        """
+        if self.risk_amount <= 0:
+            return None
+        return self.pnl / self.risk_amount
+
+
+def trade_r_multiples(trades: list[Trade]) -> np.ndarray:
+    """R of every trade that had a stop, as a float array.
+
+    Trades opened before ATR was available have no risk denominator and are
+    dropped rather than counted as zero — a trade with undefined R is missing
+    evidence, not evidence of a flat result.
+    """
+    values = [t.r_multiple for t in trades]
+    return np.asarray([v for v in values if v is not None], dtype=np.float64)
 
 
 @dataclass

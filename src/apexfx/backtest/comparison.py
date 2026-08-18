@@ -6,12 +6,14 @@ This module runs the candidate and every baseline over the same bars, through
 the same engine and cost model, and answers one question: did it win?
 
 The gate follows the audit's rule — a strategy has no demonstrated edge unless
-it beats the best baseline. Across walk-forward windows the threshold is 80% of
-windows, which is the caller's job to apply; here each window is scored.
+it beats the best baseline. Across segments that judgement is made by
+``FoldComparison``, on the per-trade expectancy in R plus a consistency check,
+rather than on a fixed share of winning windows.
 """
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -19,6 +21,7 @@ import pandas as pd
 
 from apexfx.backtest.baselines import default_baselines
 from apexfx.backtest.engine import BacktestConfig, BacktestEngine
+from apexfx.backtest.result import trade_r_multiples
 from apexfx.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -208,19 +211,122 @@ def compare_against_baselines(
     return comparison
 
 
+# A fold with fewer trades than this cannot support a verdict of its own. The
+# audit's runs closed 165-174 trades in total, which is ~18 per fold across 9
+# folds — far too few to tell a profit factor of 0.95 from 1.15.
+MIN_TRADES_PER_FOLD = 30
+
+
 @dataclass
 class FoldComparison:
     """A candidate scored against the baselines across many market segments.
 
-    One backtest number is a single draw. What decides whether an edge exists is
-    the *distribution* across segments and whether it survives the fact that
-    many configurations were tried.
+    One backtest number is a single draw. What decides whether an edge exists
+    is the distribution across segments, and whether the per-trade expectancy
+    is distinguishable from zero at the sample size actually available.
+
+    **Why R and not profit factor.** PF compresses a trade set into a ratio of
+    sums, which has no usable sampling distribution and hides the sample size
+    completely: PF 1.15 on 18 trades and on 1800 trades read identically. R —
+    P&L divided by the money risked at entry — is a per-trade quantity, so the
+    mean has a standard error and the question "could this be zero?" becomes
+    answerable.
+
+    **What the win rate is and is not.** It stays as a consistency check, with
+    an exact binomial p-value instead of a fixed threshold. Treat that p-value
+    as optimistic: the folds are contiguous slices of one price series, so a
+    market regime spanning two folds makes their outcomes correlated, and the
+    effective number of independent observations is smaller than the fold
+    count. It is a secondary read; the t-statistic on R is the primary one.
     """
 
     candidate_name: str
     fold_sharpe: pd.DataFrame        # index = fold, columns = strategy
     fold_returns: dict[str, np.ndarray]
-    gate_win_rate: float = 0.8       # the plan's threshold for gate 2
+    fold_trade_r: dict[str, list[np.ndarray]] = field(default_factory=dict)
+    min_trades_per_fold: int = MIN_TRADES_PER_FOLD
+    alpha: float = 0.05
+
+    # -- which folds carry evidence ---------------------------------------
+
+    @property
+    def candidate_trades_by_fold(self) -> list[np.ndarray]:
+        return self.fold_trade_r.get(self.candidate_name, [])
+
+    @property
+    def evaluable_folds(self) -> list[int]:
+        """Folds where the candidate traded enough to say anything."""
+        return [
+            i for i, r in enumerate(self.candidate_trades_by_fold)
+            if len(r) >= self.min_trades_per_fold
+        ]
+
+    @property
+    def underpowered_folds(self) -> list[int]:
+        """Folds excluded for too few trades — reported, never scored as losses."""
+        return [
+            i for i, r in enumerate(self.candidate_trades_by_fold)
+            if len(r) < self.min_trades_per_fold
+        ]
+
+    @property
+    def candidate_r(self) -> np.ndarray:
+        """Every candidate trade from the folds that carry evidence."""
+        folds = self.evaluable_folds
+        if not folds:
+            return np.zeros(0)
+        return np.concatenate([self.candidate_trades_by_fold[i] for i in folds])
+
+    # -- primary evidence: is mean R above zero ---------------------------
+
+    @property
+    def n_trades(self) -> int:
+        return int(len(self.candidate_r))
+
+    @property
+    def mean_r(self) -> float:
+        r = self.candidate_r
+        return float(np.mean(r)) if len(r) else 0.0
+
+    @property
+    def std_r(self) -> float:
+        r = self.candidate_r
+        return float(np.std(r, ddof=1)) if len(r) > 1 else 0.0
+
+    @property
+    def t_statistic(self) -> float | None:
+        """t of mean R against zero. None when the sample cannot support one."""
+        n, sd = self.n_trades, self.std_r
+        if n < 2 or sd <= 0:
+            return None
+        return float(self.mean_r / (sd / math.sqrt(n)))
+
+    @property
+    def p_value(self) -> float | None:
+        """One-sided p for mean R > 0."""
+        t = self.t_statistic
+        if t is None:
+            return None
+        from scipy.stats import t as student_t
+
+        return float(student_t.sf(t, df=self.n_trades - 1))
+
+    def minimum_detectable_r(self, power: float = 0.8) -> float | None:
+        """Smallest true mean R this sample could detect, at *power*.
+
+        The number that answers "do we even have the evidence to conclude
+        anything". If it comes out above the edge being claimed, a null result
+        says nothing about the strategy — only about the sample size.
+        """
+        n, sd = self.n_trades, self.std_r
+        if n < 2 or sd <= 0:
+            return None
+        from scipy.stats import norm
+
+        z = norm.ppf(1.0 - self.alpha) + norm.ppf(power)
+        return float(z * sd / math.sqrt(n))
+
+    # -- secondary evidence: consistency against the baselines ------------
 
     @property
     def baseline_names(self) -> list[str]:
@@ -229,26 +335,67 @@ class FoldComparison:
                 if c not in (self.candidate_name, "random")]
 
     @property
+    def wins(self) -> int:
+        """Evaluable folds where the candidate out-Sharped every baseline."""
+        folds = self.evaluable_folds
+        if not folds or not self.baseline_names:
+            return 0
+        rows = self.fold_sharpe.iloc[folds]
+        return int((rows[self.candidate_name] > rows[self.baseline_names].max(axis=1)).sum())
+
+    @property
     def win_rate(self) -> float:
-        """Share of folds where the candidate out-Sharpes every baseline."""
-        # No folds means no evidence, which is not the same as a clean sweep.
-        # Every fold can be skipped when the segments come out shorter than the
-        # feature warmup, and reporting 1.0 there would pass the gate on a run
-        # that never happened.
-        if len(self.fold_sharpe) == 0:
+        folds = self.evaluable_folds
+        if not folds:
             return 0.0
         if not self.baseline_names:
             return 1.0
-        candidate = self.fold_sharpe[self.candidate_name]
-        best = self.fold_sharpe[self.baseline_names].max(axis=1)
-        return float((candidate > best).mean())
+        return self.wins / len(folds)
+
+    @property
+    def win_rate_p_value(self) -> float | None:
+        """Exact binomial p for beating the baselines more often than a coin.
+
+        Replaces the old fixed 80% line, which was asserted rather than
+        derived. At 9 folds this bar is 8 wins (p = 0.020); 7 of 9 gives
+        p = 0.090 and does not clear alpha — so the old threshold was in fact
+        slightly lenient, as well as arbitrary.
+        """
+        n = len(self.evaluable_folds)
+        if n == 0 or not self.baseline_names:
+            return None
+        from scipy.stats import binomtest
+
+        return float(binomtest(self.wins, n, 0.5, alternative="greater").pvalue)
+
+    # -- verdict -----------------------------------------------------------
 
     @property
     def passes_gate(self) -> bool:
-        return self.win_rate >= self.gate_win_rate
+        """Positive expectancy AND consistency, both at *alpha*.
+
+        Two hurdles rather than one: a strategy can show a significant mean R
+        while still losing to buy & hold on most segments, and it can win most
+        segments on noise while making no money per trade.
+        """
+        if not self.evaluable_folds:
+            return False
+        p = self.p_value
+        if p is None or p >= self.alpha:
+            return False
+        wp = self.win_rate_p_value
+        return wp is not None and wp < self.alpha
 
     def probability_of_overfitting(self, n_splits: int = 8) -> float | None:
-        """PBO across the strategy set, or None when there is too little data."""
+        """PBO across the strategy set, or None when there is too little data.
+
+        Read this with care. PBO measures overfitting *by selection*, so it is
+        meaningful over the set of configurations a search actually tried. Run
+        against a fixed set of pre-specified baselines it answers a narrower
+        question — whether the in-sample best holds up out of sample — and it
+        is close to vacuous for a single candidate. It becomes the intended
+        statistic only when the columns are the trials of a real search.
+        """
         from apexfx.backtest.validation import probability_of_backtest_overfitting
 
         columns = list(self.fold_returns)
@@ -262,20 +409,61 @@ class FoldComparison:
         return probability_of_backtest_overfitting(matrix, n_splits=n_splits)
 
     def summary(self) -> str:
-        stats = self.fold_sharpe.agg(["median", "min", "max"]).T.round(3)
+        n_folds = len(self.fold_sharpe)
         lines = [
-            f"{self.candidate_name} beat every baseline on "
-            f"{self.win_rate:.0%} of {len(self.fold_sharpe)} folds "
-            f"({'PASSES' if self.passes_gate else 'FAILS'} the "
-            f"{self.gate_win_rate:.0%} gate)",
+            f"{self.candidate_name}: "
+            f"{'PASSES' if self.passes_gate else 'FAILS'} the gate",
             "",
-            "Sharpe by strategy across folds:",
-            stats.to_string(),
         ]
+
+        if not self.evaluable_folds:
+            lines.append(
+                f"No fold reached {self.min_trades_per_fold} trades "
+                f"({n_folds} folds run) — there is no evidence here either way.",
+            )
+            return "\n".join(lines)
+
+        t, p = self.t_statistic, self.p_value
+        mde = self.minimum_detectable_r()
+        lines += [
+            f"Expectancy   mean R {self.mean_r:+.4f} over {self.n_trades} trades "
+            f"in {len(self.evaluable_folds)} of {n_folds} folds",
+            f"             t = {t:.2f}, one-sided p = {p:.4f}"
+            if t is not None else "             t undefined (sample too small)",
+        ]
+        if mde is not None:
+            lines.append(
+                f"             smallest detectable mean R at 80% power: {mde:+.4f}",
+            )
+            if self.mean_r < mde and p is not None and p >= self.alpha:
+                lines.append(
+                    "             a null result at this size says nothing about "
+                    "the strategy",
+                )
+
+        wp = self.win_rate_p_value
+        lines += [
+            "",
+            f"Consistency  beat every baseline in {self.wins} of "
+            f"{len(self.evaluable_folds)} folds ({self.win_rate:.0%})"
+            + (f", binomial p = {wp:.4f}" if wp is not None else ""),
+            "             folds overlap in regime, so this p-value is optimistic",
+        ]
+
+        if self.underpowered_folds:
+            lines.append(
+                f"             excluded for under {self.min_trades_per_fold} "
+                f"trades: folds {self.underpowered_folds}",
+            )
+
+        lines += ["", "Sharpe by strategy across folds:",
+                  self.fold_sharpe.agg(["median", "min", "max"]).T.round(3).to_string()]
+
         pbo = self.probability_of_overfitting()
         if pbo is not None:
-            lines += ["", f"PBO {pbo:.3f} "
-                          f"({'acceptable' if pbo < 0.5 else 'SELECTING NOISE'})"]
+            lines += ["", f"PBO {pbo:.3f} over the baseline set "
+                          f"({'acceptable' if pbo < 0.5 else 'SELECTING NOISE'}) "
+                          f"— not a search-overfitting number, see docstring"]
         return "\n".join(lines)
 
 
@@ -321,6 +509,7 @@ def compare_across_folds(
     folds = np.array_split(np.arange(len(bars)), n_folds)
     sharpe_rows: list[dict[str, float]] = []
     returns: dict[str, list[np.ndarray]] = {name: [] for name, _ in strategies}
+    trade_r: dict[str, list[np.ndarray]] = {name: [] for name, _ in strategies}
 
     for fold_id, index in enumerate(folds):
         segment = bars.iloc[index].reset_index(drop=True)
@@ -343,6 +532,7 @@ def compare_across_folds(
             metrics = result.metrics or result.compute_metrics()
             row[name] = float(metrics.get("sharpe_ratio", 0.0))
             returns[name].append(np.asarray(result.returns_series, dtype=np.float64))
+            trade_r[name].append(trade_r_multiples(result.trades))
         sharpe_rows.append(row)
 
     # Columns are named even when every fold was skipped, so the frame keeps its
@@ -357,13 +547,17 @@ def compare_across_folds(
             name: np.concatenate(chunks) if chunks else np.zeros(0)
             for name, chunks in returns.items()
         },
+        fold_trade_r=trade_r,
     )
 
     logger.info(
         "Fold comparison complete",
         candidate=candidate_name,
         n_folds=len(fold_sharpe),
-        win_rate=round(comparison.win_rate, 3),
+        evaluable_folds=len(comparison.evaluable_folds),
+        n_trades=comparison.n_trades,
+        mean_r=round(comparison.mean_r, 4),
+        p_value=comparison.p_value,
         passes_gate=comparison.passes_gate,
     )
     return comparison

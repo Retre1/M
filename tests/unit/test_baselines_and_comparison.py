@@ -20,6 +20,7 @@ from apexfx.backtest.baselines import (
     default_baselines,
 )
 from apexfx.backtest.comparison import (
+    MIN_TRADES_PER_FOLD,
     ComparisonResult,
     FoldComparison,
     StrategyScore,
@@ -371,62 +372,177 @@ class TestSpreadIsCharged:
 
 
 class TestFoldComparisonVerdict:
-    """One backtest number is a single draw; the gate is about the spread."""
+    """The gate reads per-trade expectancy in R, not a share of winning folds.
+
+    The retired rule was "beat the best baseline in 80% of folds". It collapsed
+    each fold to one bit, threw away the sample size, and the 80% itself was
+    asserted rather than derived.
+    """
 
     @staticmethod
-    def _frame(model: list[float], **baselines: list[float]) -> pd.DataFrame:
-        return pd.DataFrame({"model": model, **baselines})
-
-    @staticmethod
-    def _comparison(frame: pd.DataFrame, **kwargs) -> FoldComparison:
+    def _comparison(
+        *, mean_r: float, n_per_fold: int, n_folds: int = 9, wins: int | None = None,
+        sd: float = 1.0, seed: int = 0, **kwargs,
+    ) -> FoldComparison:
+        """Build a comparison with a known true mean R and a chosen win count."""
+        rng = np.random.default_rng(seed)
+        trades = [rng.normal(mean_r, sd, n_per_fold) for _ in range(n_folds)]
+        wins = n_folds if wins is None else wins
+        frame = pd.DataFrame({
+            "model": [1.0] * wins + [0.0] * (n_folds - wins),
+            "buy_and_hold": [0.5] * n_folds,
+        })
         return FoldComparison(
             candidate_name="model",
             fold_sharpe=frame,
             fold_returns=kwargs.pop("fold_returns", {}),
+            fold_trade_r={"model": trades, "buy_and_hold": trades},
             **kwargs,
         )
 
-    def test_win_rate_counts_folds_where_it_beat_everything(self):
-        frame = self._frame(
-            model=[1.0, 0.2, 1.5, 0.9],
-            buy_and_hold=[0.5, 0.8, 0.4, 0.1],
-            ma_cross=[0.3, 0.1, 1.6, 0.2],
+    def test_a_real_edge_on_a_large_sample_passes(self):
+        c = self._comparison(mean_r=0.25, n_per_fold=200)
+        assert c.p_value < 0.05
+        assert c.passes_gate
+
+    def test_the_same_edge_on_the_projects_actual_sample_does_not(self):
+        """165 trades over 9 folds is ~18 each — below the floor entirely."""
+        c = self._comparison(mean_r=0.25, n_per_fold=18)
+        assert c.evaluable_folds == []
+        assert not c.passes_gate
+        assert "no evidence here either way" in c.summary()
+
+    def test_no_edge_is_not_significant(self):
+        c = self._comparison(mean_r=0.0, n_per_fold=200)
+        assert c.p_value > 0.05
+        assert not c.passes_gate
+
+    def test_expectancy_alone_is_not_enough(self):
+        """Positive mean R while losing to buy & hold on most folds fails."""
+        c = self._comparison(mean_r=0.25, n_per_fold=200, wins=4)
+        assert c.p_value < 0.05
+        assert c.win_rate_p_value > 0.05
+        assert not c.passes_gate
+
+    def test_consistency_alone_is_not_enough(self):
+        """Winning every fold while making nothing per trade also fails."""
+        c = self._comparison(mean_r=0.0, n_per_fold=200, wins=9)
+        assert c.win_rate_p_value < 0.05
+        assert not c.passes_gate
+
+
+class TestMinimumTradesPerFold:
+    @staticmethod
+    def _with_counts(counts: list[int], mean_r: float = 0.2) -> FoldComparison:
+        rng = np.random.default_rng(1)
+        trades = [rng.normal(mean_r, 1.0, n) for n in counts]
+        frame = pd.DataFrame({
+            "model": [1.0] * len(counts), "buy_and_hold": [0.5] * len(counts),
+        })
+        return FoldComparison(
+            candidate_name="model", fold_sharpe=frame, fold_returns={},
+            fold_trade_r={"model": trades, "buy_and_hold": trades},
         )
-        # Fold 1 loses to buy_and_hold, fold 2 loses to ma_cross.
-        assert self._comparison(frame).win_rate == pytest.approx(0.5)
 
-    def test_the_gate_needs_a_large_majority_of_folds(self):
-        winning = self._frame(model=[1.0] * 9 + [0.0], buy_and_hold=[0.5] * 10)
-        losing = self._frame(model=[1.0] * 7 + [0.0] * 3, buy_and_hold=[0.5] * 10)
-        assert self._comparison(winning).passes_gate
-        assert not self._comparison(losing).passes_gate
+    def test_thin_folds_are_excluded_not_counted_as_losses(self):
+        """A fold nobody traded is missing evidence, not evidence of failure."""
+        c = self._with_counts([100, 5, 100])
+        assert c.evaluable_folds == [0, 2]
+        assert c.underpowered_folds == [1]
 
-    def test_random_does_not_count_as_a_rival(self):
-        """Beating the cost probe proves nothing, so it cannot decide the gate."""
-        frame = self._frame(
-            model=[1.0, 1.0], buy_and_hold=[0.5, 0.5], random=[9.0, 9.0],
+    def test_excluded_trades_do_not_enter_the_statistic(self):
+        c = self._with_counts([100, 5, 100])
+        assert c.n_trades == 200
+
+    def test_the_exclusion_is_reported_not_silent(self):
+        assert "excluded for under" in self._with_counts([100, 5, 100]).summary()
+
+    def test_the_floor_is_the_documented_constant(self):
+        just_under = self._with_counts([MIN_TRADES_PER_FOLD - 1] * 3)
+        just_over = self._with_counts([MIN_TRADES_PER_FOLD] * 3)
+        assert just_under.evaluable_folds == []
+        assert len(just_over.evaluable_folds) == 3
+
+
+class TestPowerIsReported:
+    """Answers "could this sample have detected the edge being claimed?"."""
+
+    @staticmethod
+    def _sample(n_per_fold: int, mean_r: float = 0.0, sd: float = 1.0):
+        rng = np.random.default_rng(2)
+        trades = [rng.normal(mean_r, sd, n_per_fold) for _ in range(9)]
+        frame = pd.DataFrame({"model": [1.0] * 9, "buy_and_hold": [0.5] * 9})
+        return FoldComparison(
+            candidate_name="model", fold_sharpe=frame, fold_returns={},
+            fold_trade_r={"model": trades, "buy_and_hold": trades},
         )
-        comparison = self._comparison(frame)
-        assert comparison.baseline_names == ["buy_and_hold"]
-        assert comparison.win_rate == 1.0
 
-    def test_a_sharpe_tie_is_not_a_win(self):
-        frame = self._frame(model=[0.7, 0.7], buy_and_hold=[0.7, 0.7])
-        assert self._comparison(frame).win_rate == 0.0
+    def test_a_bigger_sample_detects_a_smaller_edge(self):
+        small = self._sample(40).minimum_detectable_r()
+        large = self._sample(1000).minimum_detectable_r()
+        assert large < small
 
-    def test_no_folds_is_no_evidence_not_a_clean_sweep(self):
-        """Every fold can be skipped as too short; that must not pass the gate."""
-        empty = pd.DataFrame(columns=["model", "buy_and_hold"])
-        comparison = self._comparison(empty)
-        assert comparison.win_rate == 0.0
-        assert not comparison.passes_gate
+    def test_the_detectable_effect_shrinks_as_the_root_of_n(self):
+        """Quadrupling the trades roughly halves the detectable effect."""
+        base = self._sample(100).minimum_detectable_r()
+        quad = self._sample(400).minimum_detectable_r()
+        assert quad == pytest.approx(base / 2, rel=0.12)
 
-    def test_the_verdict_appears_in_the_summary(self):
-        frame = self._frame(model=[1.0] * 10, buy_and_hold=[0.5] * 10)
-        summary = self._comparison(frame).summary()
-        assert "PASSES" in summary
-        assert "100%" in summary
-        assert "buy_and_hold" in summary
+    def test_a_null_result_on_a_thin_sample_is_flagged_as_uninformative(self):
+        summary = self._sample(35, mean_r=0.05).summary()
+        assert "says nothing about the strategy" in summary
+
+    def test_no_verdict_without_a_usable_sample(self):
+        rng = np.random.default_rng(3)
+        c = FoldComparison(
+            candidate_name="model",
+            fold_sharpe=pd.DataFrame({"model": [1.0], "buy_and_hold": [0.5]}),
+            fold_returns={},
+            fold_trade_r={"model": [rng.normal(0, 1, 40)], "buy_and_hold": []},
+        )
+        flat = FoldComparison(
+            candidate_name="model",
+            fold_sharpe=pd.DataFrame({"model": [1.0], "buy_and_hold": [0.5]}),
+            fold_returns={},
+            fold_trade_r={"model": [np.full(40, 0.1)], "buy_and_hold": []},
+        )
+        assert c.minimum_detectable_r() is not None
+        # Zero variance: no standard error, so no detectable-effect statement.
+        assert flat.minimum_detectable_r() is None
+        assert flat.t_statistic is None
+
+
+class TestWinRateThresholdIsDerived:
+    """The 80% line is replaced by an exact binomial test."""
+
+    @staticmethod
+    def _wins(wins: int, n_folds: int = 9) -> FoldComparison:
+        rng = np.random.default_rng(4)
+        trades = [rng.normal(0.1, 1.0, 100) for _ in range(n_folds)]
+        frame = pd.DataFrame({
+            "model": [1.0] * wins + [0.0] * (n_folds - wins),
+            "buy_and_hold": [0.5] * n_folds,
+        })
+        return FoldComparison(
+            candidate_name="model", fold_sharpe=frame, fold_returns={},
+            fold_trade_r={"model": trades, "buy_and_hold": trades},
+        )
+
+    def test_eight_of_nine_clears_alpha(self):
+        assert self._wins(8).win_rate_p_value == pytest.approx(0.0195, abs=1e-3)
+
+    def test_seven_of_nine_does_not(self):
+        """7/9 is 78% — under the old rule a near miss, here plainly not significant."""
+        assert self._wins(7).win_rate_p_value == pytest.approx(0.0898, abs=1e-3)
+
+    def test_the_old_eighty_percent_line_sat_below_the_bar(self):
+        """At 9 folds alpha = 0.05 demands 8 wins, i.e. 88.9%, not 80%."""
+        assert self._wins(8).win_rate > 0.8
+        assert self._wins(7).win_rate < 0.8
+        assert self._wins(8).win_rate_p_value < 0.05 < self._wins(7).win_rate_p_value
+
+    def test_the_optimism_of_the_p_value_is_stated(self):
+        assert "optimistic" in self._wins(8).summary()
 
 
 class TestFoldComparisonOverfitting:
@@ -441,8 +557,13 @@ class TestFoldComparisonOverfitting:
     @staticmethod
     def _comparison(returns: dict[str, np.ndarray]) -> FoldComparison:
         frame = pd.DataFrame({name: [0.0] for name in returns})
+        # Trades are supplied so the summary gets past the "no evidence" guard;
+        # PBO itself is computed from the bar returns, not from these.
+        rng = np.random.default_rng(9)
+        trades = {name: [rng.normal(0.0, 1.0, 60)] for name in returns}
         return FoldComparison(
             candidate_name="model", fold_sharpe=frame, fold_returns=returns,
+            fold_trade_r=trades,
         )
 
     def test_pbo_is_reported_when_there_is_enough_history(self):

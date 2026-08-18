@@ -57,6 +57,9 @@ class OpenPosition:
     take_profit: float | None = None
     entry_bar_idx: int = 0
     notional: float = 0.0
+    # Fixed at entry and never trailed — R is measured against what was risked
+    # when the position was taken, not against wherever the stop ended up.
+    initial_risk: float = 0.0
 
 
 @dataclass
@@ -333,6 +336,11 @@ class BacktestEngine:
                     take_profit = entry_price - tp_distance
 
             notional = volume * self._config.contract_size * entry_price
+            initial_risk = (
+                abs(entry_price - stop_loss) * volume * self._config.contract_size
+                if stop_loss is not None
+                else 0.0
+            )
 
             self._position = OpenPosition(
                 symbol=self._config.symbol,
@@ -342,6 +350,7 @@ class BacktestEngine:
                 volume=volume,
                 stop_loss=stop_loss,
                 take_profit=take_profit,
+                initial_risk=initial_risk,
                 entry_bar_idx=bar_idx,
                 notional=notional,
             )
@@ -403,6 +412,7 @@ class BacktestEngine:
             commission=commission * 2,  # round-trip
             bars_held=bar_idx - self._position.entry_bar_idx,
             exit_reason=reason,
+            risk_amount=self._position.initial_risk,
         )
 
         self._result.record_trade(trade)
