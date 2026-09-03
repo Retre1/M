@@ -121,7 +121,7 @@ class MultiSymbolTradingLoop:
     async def stop(self) -> None:
         """Signal all loops to stop."""
         self._running = False
-        for symbol, loop in self._loops.items():
+        for _symbol, loop in self._loops.items():
             if hasattr(loop, "stop"):
                 await loop.stop()
         logger.info("Multi-symbol trading stopped")

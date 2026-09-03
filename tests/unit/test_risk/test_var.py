@@ -1,7 +1,6 @@
 """Tests for VaR calculator."""
 
 import numpy as np
-import pytest
 
 from apexfx.risk.var_calculator import VaRCalculator
 

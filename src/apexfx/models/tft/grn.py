@@ -65,10 +65,7 @@ class GatedResidualNetwork(nn.Module):
             (batch, [time,] d_output)
         """
         # Skip connection
-        if self.skip_proj is not None:
-            residual = self.skip_proj(x)
-        else:
-            residual = x
+        residual = self.skip_proj(x) if self.skip_proj is not None else x
 
         # Primary path
         hidden = self.fc1(x)

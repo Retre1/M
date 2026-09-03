@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -14,8 +13,8 @@ from apexfx.config.schema import (
     CooldownConfig,
     PositionSizingConfig,
     RiskConfig,
-    StressTestConfig,
     StrategyFilterConfig,
+    StressTestConfig,
 )
 from apexfx.risk.risk_manager import (
     DailyLossGuard,
@@ -26,7 +25,6 @@ from apexfx.risk.risk_manager import (
     VolatilityTargeter,
     WeekendGapGuard,
 )
-
 
 # ---------------------------------------------------------------------------
 # KillSwitch
@@ -261,6 +259,15 @@ class TestRiskManagerEvaluateAction:
         with patch.object(KillSwitch, "KILL_FILE", tmp_path / "KILL_SWITCH"):
             yield
 
+    @pytest.fixture(autouse=True)
+    def _freeze_clock(self, frozen_trading_clock):
+        """Pin the clock so WeekendGapGuard does not veto on weekends.
+
+        These tests exercise the daily-loss, spread, cooldown and dead-zone
+        gates; the weekend gate fires before them and would otherwise make the
+        outcome depend on the day the suite runs.
+        """
+
     def _make_rm(self, **config_overrides) -> RiskManager:
         cfg = _make_risk_config(**config_overrides)
         rm = RiskManager(config=cfg, initial_balance=100_000.0)
@@ -349,7 +356,7 @@ class TestRiskManagerEvaluateAction:
         ms = _make_market_state()
         # Simulate a drawdown beyond the max (5%)
         rm.drawdown.update(100_000)  # Set peak
-        rm.drawdown.update(94_000)   # 6% drawdown → breached
+        rm.drawdown.update(94_000)  # 6% drawdown → breached
         assert rm.drawdown.is_breached
         decision = rm.evaluate_action(0.5, ms)
         assert not decision.approved
@@ -387,7 +394,9 @@ class TestForceCloseAll:
 
     def test_force_close_on_drawdown_breach(self):
         rm = RiskManager(config=_make_risk_config(), initial_balance=100_000.0)
-        with patch.object(type(rm.drawdown), "is_breached", new_callable=lambda: property(lambda self: True)):
+        with patch.object(
+            type(rm.drawdown), "is_breached", new_callable=lambda: property(lambda self: True)
+        ):
             assert rm.force_close_all() is True
 
     def test_force_close_on_kill_switch(self):
@@ -421,9 +430,7 @@ class TestDynamicStop:
 
     def test_trending_regime_uses_trailing(self):
         rm = RiskManager(config=_make_risk_config(), initial_balance=100_000.0)
-        stop = rm.compute_dynamic_stop(
-            uncertainty_score=0.0, regime="trending", current_atr=0.005
-        )
+        stop = rm.compute_dynamic_stop(uncertainty_score=0.0, regime="trending", current_atr=0.005)
         assert stop.trailing is True
         assert stop.stop_distance is not None
 

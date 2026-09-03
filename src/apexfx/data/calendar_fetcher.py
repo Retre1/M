@@ -81,10 +81,7 @@ def _is_us_dst(d: date) -> bool:
 
 def _et_to_utc(dt: datetime) -> datetime:
     """Convert Eastern Time datetime to UTC."""
-    if _is_us_dst(dt.date()):
-        offset = _ET_OFFSET_DST
-    else:
-        offset = _ET_OFFSET_STANDARD
+    offset = _ET_OFFSET_DST if _is_us_dst(dt.date()) else _ET_OFFSET_STANDARD
     return (dt - offset).replace(tzinfo=UTC)
 
 
@@ -443,7 +440,7 @@ class CalendarFetcher:
             return None
 
         # Try various formats
-        for fmt in ("%b %d", "%b%d"):
+        for _fmt in ("%b %d", "%b%d"):
             try:
                 clean = " ".join(parts[-2:])  # Take last two parts (month + day)
                 parsed = datetime.strptime(clean, "%b %d")
@@ -495,7 +492,9 @@ class CalendarFetcher:
 
             for event in events:
                 # Filter to requested range
-                event_date = event.time_utc.date() if hasattr(event.time_utc, "date") else event.time_utc
+                event_date = (
+                    event.time_utc.date() if hasattr(event.time_utc, "date") else event.time_utc
+                )
                 if isinstance(event_date, datetime):
                     event_date = event_date.date()
                 if event_date < start or event_date > end:
@@ -536,17 +535,19 @@ class CalendarFetcher:
 
         records = []
         for event in events:
-            records.append({
-                "datetime_utc": event.time_utc.strftime("%Y-%m-%d %H:%M:%S%z")
-                if event.time_utc.tzinfo
-                else event.time_utc.strftime("%Y-%m-%d %H:%M:%S"),
-                "currency": event.currency,
-                "event_name": event.name,
-                "impact": event.impact,
-                "actual": event.actual if event.actual is not None else "",
-                "forecast": event.forecast if event.forecast is not None else "",
-                "previous": event.previous if event.previous is not None else "",
-            })
+            records.append(
+                {
+                    "datetime_utc": event.time_utc.strftime("%Y-%m-%d %H:%M:%S%z")
+                    if event.time_utc.tzinfo
+                    else event.time_utc.strftime("%Y-%m-%d %H:%M:%S"),
+                    "currency": event.currency,
+                    "event_name": event.name,
+                    "impact": event.impact,
+                    "actual": event.actual if event.actual is not None else "",
+                    "forecast": event.forecast if event.forecast is not None else "",
+                    "previous": event.previous if event.previous is not None else "",
+                }
+            )
 
         df = pd.DataFrame(records)
         df.to_csv(path, index=False)

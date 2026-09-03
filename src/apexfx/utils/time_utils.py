@@ -52,9 +52,8 @@ def is_forex_market_open(dt: datetime) -> bool:
         return False
     if weekday == 5:  # Saturday
         return False
-    if weekday == 6 and hour < 21:  # Sunday before 21:00
-        return False
-    return True
+    # Sunday before 21:00 UTC the week has not opened yet
+    return not (weekday == 6 and hour < 21)
 
 
 def encode_time_features(dt: datetime) -> np.ndarray:

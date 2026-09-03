@@ -10,14 +10,10 @@ Tests cover:
 
 from __future__ import annotations
 
-import asyncio
 import time
-from datetime import datetime, timezone
-from unittest.mock import MagicMock
+from datetime import UTC, datetime
 
-import pytest
-
-from apexfx.config.schema import NewsConfig, DataConfig
+from apexfx.config.schema import DataConfig, NewsConfig
 from apexfx.data.realtime_news import (
     FastRSSPoller,
     FinnhubWebSocket,
@@ -25,7 +21,6 @@ from apexfx.data.realtime_news import (
     NewsHeadline,
     RealtimeNewsStream,
 )
-
 
 # ---------------------------------------------------------------------------
 # NewsConfig
@@ -104,7 +99,7 @@ class TestNewsHeadline:
     def test_to_dict(self):
         h = NewsHeadline(
             text="Test headline",
-            timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            timestamp=datetime(2026, 1, 1, tzinfo=UTC),
             source="test",
             category="forex",
             is_urgent=True,
@@ -117,7 +112,7 @@ class TestNewsHeadline:
 
     def test_defaults(self):
         h = NewsHeadline(
-            text="X", timestamp=datetime.now(timezone.utc), source="s",
+            text="X", timestamp=datetime.now(UTC), source="s",
         )
         assert h.is_urgent is False
         assert h.latency_ms == 0.0
@@ -262,7 +257,7 @@ class TestRealtimeNewsStream:
 
         headline = NewsHeadline(
             text="BREAKING: Flash crash in EURUSD",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             source="test",
         )
         stream._on_headline(headline)
@@ -283,7 +278,7 @@ class TestRealtimeNewsStream:
         # First urgent headline
         h1 = NewsHeadline(
             text="BREAKING: Rate decision",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             source="test",
         )
         stream._on_headline(h1)
@@ -292,7 +287,7 @@ class TestRealtimeNewsStream:
         # Second urgent headline within cooldown — NOT marked urgent
         h2 = NewsHeadline(
             text="BREAKING: Another surprise",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             source="test",
         )
         stream._on_headline(h2)
@@ -304,12 +299,12 @@ class TestRealtimeNewsStream:
 
         h1 = NewsHeadline(
             text="Fed raises rates",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             source="forexlive",
         )
         h2 = NewsHeadline(
             text="Fed raises rates",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             source="fxstreet",  # Same headline, different source
         )
 
@@ -327,7 +322,7 @@ class TestRealtimeNewsStream:
         for i in range(5):
             h = NewsHeadline(
                 text=f"Headline number {i}",
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
                 source="rss_test",
                 latency_ms=100.0 + i * 10,
             )
@@ -345,7 +340,7 @@ class TestRealtimeNewsStream:
         for i in range(210):
             h = NewsHeadline(
                 text=f"Headline {i}",
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
                 source="test",
             )
             stream._on_headline(h)

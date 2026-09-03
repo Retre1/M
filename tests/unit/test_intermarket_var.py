@@ -8,14 +8,10 @@ Covers:
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pandas as pd
-import pytest
-
 
 # ---------------------------------------------------------------------------
 # IntermarketDataProvider
@@ -150,8 +146,8 @@ class TestPortfolioVaRReal:
 
     def test_record_symbol_return(self):
         """RiskManager tracks per-symbol returns."""
-        from apexfx.risk.risk_manager import RiskManager
         from apexfx.config.schema import RiskConfig
+        from apexfx.risk.risk_manager import RiskManager
         rm = RiskManager(RiskConfig(), initial_balance=100000)
 
         rm.record_symbol_return("EURUSD", 0.005)
@@ -163,8 +159,8 @@ class TestPortfolioVaRReal:
 
     def test_compute_symbol_vol_with_data(self):
         """Computes realized vol when sufficient data exists."""
-        from apexfx.risk.risk_manager import RiskManager
         from apexfx.config.schema import RiskConfig
+        from apexfx.risk.risk_manager import RiskManager
         rm = RiskManager(RiskConfig(), initial_balance=100000)
 
         np.random.seed(42)
@@ -176,8 +172,8 @@ class TestPortfolioVaRReal:
 
     def test_compute_symbol_vol_default_fallback(self):
         """Falls back to config default with insufficient data."""
-        from apexfx.risk.risk_manager import RiskManager
         from apexfx.config.schema import RiskConfig
+        from apexfx.risk.risk_manager import RiskManager
         rm = RiskManager(RiskConfig(), initial_balance=100000)
 
         vol = rm._compute_symbol_vol("UNKNOWN")
@@ -185,8 +181,8 @@ class TestPortfolioVaRReal:
 
     def test_symbol_returns_truncation(self):
         """Buffer doesn't grow unbounded."""
-        from apexfx.risk.risk_manager import RiskManager
         from apexfx.config.schema import RiskConfig
+        from apexfx.risk.risk_manager import RiskManager
         rm = RiskManager(RiskConfig(), initial_balance=100000)
 
         for _ in range(200):
@@ -240,7 +236,7 @@ class TestPortfolioVaRReal:
 
     def test_portfolio_var_uses_dynamic_correlation(self):
         """Verify dynamic correlations are used in the risk manager's VaR check."""
-        from apexfx.live.portfolio_manager import DynamicCorrelationTracker, get_correlation_tracker
+        from apexfx.live.portfolio_manager import get_correlation_tracker
 
         tracker = get_correlation_tracker()
         # Feed highly correlated returns

@@ -114,19 +114,41 @@ class MTFForexTradingEnv(ForexTradingEnv):
         m5_market_size = m5_lookback * n_market_features
         m5_time_size = m5_lookback * n_time_features
 
-        self.observation_space = spaces.Dict({
-            "d1_market_features": spaces.Box(-np.inf, np.inf, shape=(d1_market_size,), dtype=np.float32),
-            "d1_time_features": spaces.Box(-np.inf, np.inf, shape=(d1_time_size,), dtype=np.float32),
-            "h1_market_features": spaces.Box(-np.inf, np.inf, shape=(h1_market_size,), dtype=np.float32),
-            "h1_time_features": spaces.Box(-np.inf, np.inf, shape=(h1_time_size,), dtype=np.float32),
-            "m5_market_features": spaces.Box(-np.inf, np.inf, shape=(m5_market_size,), dtype=np.float32),
-            "m5_time_features": spaces.Box(-np.inf, np.inf, shape=(m5_time_size,), dtype=np.float32),
-            "trend_features": spaces.Box(-np.inf, np.inf, shape=(n_trend_features,), dtype=np.float32),
-            "reversion_features": spaces.Box(-np.inf, np.inf, shape=(n_reversion_features,), dtype=np.float32),
-            "regime_features": spaces.Box(-np.inf, np.inf, shape=(n_regime_features,), dtype=np.float32),
-            "position_state": spaces.Box(-np.inf, np.inf, shape=(4,), dtype=np.float32),
-            "mtf_context": spaces.Box(-np.inf, np.inf, shape=(n_mtf_context,), dtype=np.float32),
-        })
+        self.observation_space = spaces.Dict(
+            {
+                "d1_market_features": spaces.Box(
+                    -np.inf, np.inf, shape=(d1_market_size,), dtype=np.float32
+                ),
+                "d1_time_features": spaces.Box(
+                    -np.inf, np.inf, shape=(d1_time_size,), dtype=np.float32
+                ),
+                "h1_market_features": spaces.Box(
+                    -np.inf, np.inf, shape=(h1_market_size,), dtype=np.float32
+                ),
+                "h1_time_features": spaces.Box(
+                    -np.inf, np.inf, shape=(h1_time_size,), dtype=np.float32
+                ),
+                "m5_market_features": spaces.Box(
+                    -np.inf, np.inf, shape=(m5_market_size,), dtype=np.float32
+                ),
+                "m5_time_features": spaces.Box(
+                    -np.inf, np.inf, shape=(m5_time_size,), dtype=np.float32
+                ),
+                "trend_features": spaces.Box(
+                    -np.inf, np.inf, shape=(n_trend_features,), dtype=np.float32
+                ),
+                "reversion_features": spaces.Box(
+                    -np.inf, np.inf, shape=(n_reversion_features,), dtype=np.float32
+                ),
+                "regime_features": spaces.Box(
+                    -np.inf, np.inf, shape=(n_regime_features,), dtype=np.float32
+                ),
+                "position_state": spaces.Box(-np.inf, np.inf, shape=(4,), dtype=np.float32),
+                "mtf_context": spaces.Box(
+                    -np.inf, np.inf, shape=(n_mtf_context,), dtype=np.float32
+                ),
+            }
+        )
 
     def reset(
         self, seed: int | None = None, options: dict | None = None
@@ -156,6 +178,9 @@ class MTFForexTradingEnv(ForexTradingEnv):
         self._total_trades = 0
         self._trade_returns = []
         self._equity_curve = [self._initial_balance]
+        self._step_realized_pnl = 0.0
+        self._action_queue = []
+        self._position_layers = []
         self._reward_fn.reset()
         self._stop_loss.reset()
 

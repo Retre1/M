@@ -23,6 +23,21 @@ logger = get_logger(__name__)
 ANNUAL_TRADING_DAYS = 252
 RISK_FREE_RATE = 0.05  # 5% annualized for 2024-2026 era
 
+# Annualising a bar-level return series with ANNUAL_TRADING_DAYS is only right
+# for daily bars. On H1 it is wrong twice over: the horizon is 24x too long and
+# the volatility scaling is off by sqrt(24). The period count is instead
+# inferred from the equity curve's own timestamps.
+SECONDS_PER_TRADING_YEAR = ANNUAL_TRADING_DAYS * 24 * 3600
+
+# Below this annualised volatility a Sharpe ratio stops meaning anything: the
+# risk-free subtraction dominates and (0 - 0.05) / ~0 explodes into the
+# hundreds. Observed on a backtest whose positions were all minimum-lot: 0.015%
+# annualised volatility produced a "Sharpe" of -343, which says nothing about
+# the strategy and everything about it not having taken a position. A real FX
+# strategy runs 5-20% annual volatility, so 0.1% is already three orders of
+# magnitude into the not-really-trading regime.
+MIN_MEANINGFUL_VOLATILITY = 1e-3
+
 
 @dataclass
 class Trade:
@@ -40,6 +55,35 @@ class Trade:
     slippage: float = 0.0
     bars_held: int = 0
     exit_reason: str = ""  # "signal", "stop_loss", "take_profit", "risk_close"
+    # Money at risk when the position was opened, from the *initial* stop.
+    # Trailing moves the stop, so the live stop cannot be used: R has to be
+    # measured against what was actually risked at entry. Zero when no stop
+    # was placed (no ATR yet), which leaves R undefined for that trade.
+    risk_amount: float = 0.0
+
+    @property
+    def r_multiple(self) -> float | None:
+        """P&L in units of the risk taken, or None when nothing was at risk.
+
+        R is the unit that makes trades comparable across volatility regimes
+        and position sizes — a $200 win on $100 risked and a $20 win on $10
+        risked are the same result. Profit factor cannot say that, which is
+        why the gate reads R and not PF.
+        """
+        if self.risk_amount <= 0:
+            return None
+        return self.pnl / self.risk_amount
+
+
+def trade_r_multiples(trades: list[Trade]) -> np.ndarray:
+    """R of every trade that had a stop, as a float array.
+
+    Trades opened before ATR was available have no risk denominator and are
+    dropped rather than counted as zero — a trade with undefined R is missing
+    evidence, not evidence of a flat result.
+    """
+    values = [t.r_multiple for t in trades]
+    return np.asarray([v for v in values if v is not None], dtype=np.float64)
 
 
 @dataclass
@@ -188,12 +232,36 @@ class BacktestResult:
         self.metrics = m
         return m
 
+    def periods_per_year(self) -> float:
+        """How many bars of this backtest make up a trading year.
+
+        Taken from the median spacing of the equity curve rather than assumed,
+        because the same code runs on M5, H1 and D1 data. Falls back to the
+        daily count when there are too few points to measure.
+        """
+        if len(self.equity_curve) < 3:
+            return float(ANNUAL_TRADING_DAYS)
+
+        times = [t for t, _ in self.equity_curve]
+        deltas = [
+            (b - a).total_seconds()
+            for a, b in zip(times[:-1], times[1:], strict=False)
+        ]
+        median_dt = float(np.median(deltas))
+        if median_dt <= 0:
+            return float(ANNUAL_TRADING_DAYS)
+        return SECONDS_PER_TRADING_YEAR / median_dt
+
     def _annualized_return(self, returns: np.ndarray) -> float:
-        """Compute annualized return from daily returns."""
+        """Compute annualized return from the bar-level return series."""
         if len(returns) < 2:
             return 0.0
         total = np.prod(1 + returns) - 1
-        n_years = len(returns) / ANNUAL_TRADING_DAYS
+        # A total loss makes the geometric annualisation undefined for a
+        # fractional exponent; report the -100% directly.
+        if total <= -1.0:
+            return -1.0
+        n_years = len(returns) / self.periods_per_year()
         if n_years <= 0:
             return 0.0
         return (1 + total) ** (1 / n_years) - 1
@@ -202,13 +270,13 @@ class BacktestResult:
         """Compute annualized volatility."""
         if len(returns) < 2:
             return 0.0
-        return float(np.std(returns, ddof=1) * np.sqrt(ANNUAL_TRADING_DAYS))
+        return float(np.std(returns, ddof=1) * np.sqrt(self.periods_per_year()))
 
     def _sharpe_ratio(self, returns: np.ndarray) -> float:
         """Compute annualized Sharpe ratio."""
         ann_ret = self._annualized_return(returns)
         ann_vol = self._annualized_volatility(returns)
-        if ann_vol < 1e-10:
+        if ann_vol < MIN_MEANINGFUL_VOLATILITY:
             return 0.0
         return (ann_ret - RISK_FREE_RATE) / ann_vol
 
@@ -218,8 +286,8 @@ class BacktestResult:
         downside = returns[returns < 0]
         if len(downside) < 2:
             return 0.0
-        downside_vol = float(np.std(downside, ddof=1) * np.sqrt(ANNUAL_TRADING_DAYS))
-        if downside_vol < 1e-10:
+        downside_vol = float(np.std(downside, ddof=1) * np.sqrt(self.periods_per_year()))
+        if downside_vol < MIN_MEANINGFUL_VOLATILITY:
             return 0.0
         return (ann_ret - RISK_FREE_RATE) / downside_vol
 

@@ -252,7 +252,6 @@ class SentimentExtractor(BaseFeatureExtractor):
         have historical headline data synchronized to bar timestamps.
         For live mode, call update_headlines() then extract_live().
         """
-        n = len(data)
         result = pd.DataFrame(index=data.index)
 
         for name in self.feature_names:

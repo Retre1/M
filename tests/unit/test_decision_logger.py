@@ -6,13 +6,10 @@ import csv
 import json
 import threading
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
-import pytest
-
 from apexfx.live.decision_logger import DecisionLogger, DecisionRecord
-
 
 # ---------------------------------------------------------------------------
 # Helpers — lightweight stand-in for TradingSignal (avoids heavy imports)
@@ -172,7 +169,7 @@ class TestQuery:
     def test_query_with_limit(self, tmp_path: Path):
         db = tmp_path / "test.db"
         with DecisionLogger(db, buffer_size=1000) as dl:
-            for i in range(20):
+            for _i in range(20):
                 sig = _make_signal()
                 dl.log(DecisionRecord.from_signal(sig, 100_000, 0.0))
             results = dl.query(limit=5)

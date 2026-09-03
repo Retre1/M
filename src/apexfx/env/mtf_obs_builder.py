@@ -54,18 +54,32 @@ class MTFObservationBuilder:
         # Column mappings (same as ObservationBuilder for consistency)
         self.market_columns: list[str] = []
         self.trend_columns: list[str] = [
-            "hurst_exponent", "trend_strength", "realized_vol",
-            "wavelet_trend", "fft_dominant_period",
-            "delta_ma_50", "regime_trending", "poc_distance",
+            "hurst_exponent",
+            "trend_strength",
+            "realized_vol",
+            "wavelet_trend",
+            "fft_dominant_period",
+            "delta_ma_50",
+            "regime_trending",
+            "poc_distance",
         ]
         self.reversion_columns: list[str] = [
-            "close_zscore", "hvn_distance", "volume_profile_skew",
-            "delta_pct", "delta_divergence", "regime_mean_reverting",
-            "nearest_support_distance", "nearest_resistance_distance",
+            "close_zscore",
+            "hvn_distance",
+            "volume_profile_skew",
+            "delta_pct",
+            "delta_divergence",
+            "regime_mean_reverting",
+            "nearest_support_distance",
+            "nearest_resistance_distance",
         ]
         self.regime_columns: list[str] = [
-            "hurst_exponent", "realized_vol", "trend_strength",
-            "regime_trending", "regime_mean_reverting", "regime_flat",
+            "hurst_exponent",
+            "realized_vol",
+            "trend_strength",
+            "regime_trending",
+            "regime_mean_reverting",
+            "regime_flat",
         ]
 
     def build(
@@ -111,16 +125,23 @@ class MTFObservationBuilder:
 
         # Scalar features from H1 (latest bar)
         trend = self._extract_latest(h1_features, h1_idx, self.trend_columns, self.n_trend_features)
-        reversion = self._extract_latest(h1_features, h1_idx, self.reversion_columns, self.n_reversion_features)
-        regime = self._extract_latest(h1_features, h1_idx, self.regime_columns, self.n_regime_features)
+        reversion = self._extract_latest(
+            h1_features, h1_idx, self.reversion_columns, self.n_reversion_features
+        )
+        regime = self._extract_latest(
+            h1_features, h1_idx, self.regime_columns, self.n_regime_features
+        )
 
         # Position state
-        position_state = np.array([
-            position,
-            unrealized_pnl / (initial_balance + 1e-10),
-            min(time_in_position / 100.0, 1.0),
-            portfolio_value / (initial_balance + 1e-10) - 1.0,
-        ], dtype=np.float32)
+        position_state = np.array(
+            [
+                position,
+                unrealized_pnl / (initial_balance + 1e-10),
+                min(time_in_position / 100.0, 1.0),
+                portfolio_value / (initial_balance + 1e-10) - 1.0,
+            ],
+            dtype=np.float32,
+        )
 
         # MTF context — cross-timeframe signals
         mtf_context = self._compute_mtf_context(mtf_slice)
@@ -146,8 +167,18 @@ class MTFObservationBuilder:
     ) -> np.ndarray:
         """Extract and pad market features for a timeframe window."""
         # Identify market columns (exclude OHLCV and metadata)
-        exclude = {"time", "open", "high", "low", "close", "volume",
-                    "tick_count", "regime_label", "hurst_regime", "regime"}
+        exclude = {
+            "time",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "tick_count",
+            "regime_label",
+            "hurst_regime",
+            "regime",
+        }
 
         if not self.market_columns:
             self.market_columns = [c for c in df.columns if c not in exclude][
@@ -161,7 +192,11 @@ class MTFObservationBuilder:
             ohlcv_cols = [c for c in ["open", "high", "low", "close", "volume"] if c in df.columns]
             avail_cols = ohlcv_cols
 
-        data = df[avail_cols].values.astype(np.float32) if len(avail_cols) > 0 else np.zeros((len(df), 1), dtype=np.float32)
+        data = (
+            df[avail_cols].values.astype(np.float32)
+            if len(avail_cols) > 0
+            else np.zeros((len(df), 1), dtype=np.float32)
+        )
 
         # Pad columns to n_market_features
         if data.shape[1] < self.n_market_features:

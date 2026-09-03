@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import json
-import tempfile
 from dataclasses import asdict
 from pathlib import Path
 
 import pytest
 
 from apexfx.live.state_manager import PortfolioState, StateManager, WALEntry
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -185,7 +183,8 @@ class TestPositionLifecycle:
         sm.open_position("EURUSD", direction=-1, volume=0.10, entry_price=1.1000)
         sm.close_position(exit_price=1.0950, pnl=50.0, pip_value=0.0001)
         s = sm.state
-        # For SHORT: pnl_pips = -((exit - entry) / pip_value) = -((1.0950 - 1.1000) / 0.0001) = 50 pips
+        # For SHORT: pnl_pips = -((exit - entry) / pip_value)
+        #                     = -((1.0950 - 1.1000) / 0.0001) = 50 pips
         last_trade = s.trade_history[-1]
         assert last_trade["pnl_pips"] == pytest.approx(50.0, rel=1e-5)
 

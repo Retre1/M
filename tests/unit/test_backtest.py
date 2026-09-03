@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -18,7 +19,7 @@ def _make_bars(n: int = 1000, trend: float = 0.0001) -> pd.DataFrame:
     high = close + np.abs(np.random.randn(n) * 0.0005)
     low = close - np.abs(np.random.randn(n) * 0.0005)
     opn = close + np.random.randn(n) * 0.0003
-    start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    start = datetime(2025, 1, 1, tzinfo=UTC)
     return pd.DataFrame({
         "time": [start + timedelta(hours=i) for i in range(n)],
         "open": opn, "high": high, "low": low, "close": close,
@@ -36,7 +37,7 @@ class TestBacktestResult:
     def test_record_equity(self):
         from apexfx.backtest.result import BacktestResult
         r = BacktestResult(initial_equity=100000)
-        ts = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        ts = datetime(2025, 1, 1, tzinfo=UTC)
         r.record_equity(ts, 100000)
         r.record_equity(ts + timedelta(days=1), 101000)
         r.record_equity(ts + timedelta(days=2), 100500)
@@ -46,7 +47,7 @@ class TestBacktestResult:
     def test_compute_metrics_basic(self):
         from apexfx.backtest.result import BacktestResult
         r = BacktestResult(initial_equity=100000)
-        ts = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        ts = datetime(2025, 1, 1, tzinfo=UTC)
         for i in range(100):
             eq = 100000 + i * 100
             r.record_equity(ts + timedelta(hours=i), eq)
@@ -58,9 +59,9 @@ class TestBacktestResult:
     def test_trade_stats(self):
         from apexfx.backtest.result import BacktestResult, Trade
         r = BacktestResult()
-        ts = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        ts = datetime(2025, 1, 1, tzinfo=UTC)
         # 3 winners, 2 losers
-        for i, pnl in enumerate([100, 200, -50, 150, -30]):
+        for _i, pnl in enumerate([100, 200, -50, 150, -30]):
             r.record_trade(Trade(
                 entry_time=ts, exit_time=ts + timedelta(hours=1),
                 symbol="EURUSD", direction=1,
@@ -78,7 +79,7 @@ class TestBacktestResult:
     def test_drawdown_computation(self):
         from apexfx.backtest.result import BacktestResult
         r = BacktestResult(initial_equity=100000)
-        ts = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        ts = datetime(2025, 1, 1, tzinfo=UTC)
         # Equity goes up then down
         equities = [100000, 110000, 105000, 108000, 100000, 112000]
         for i, eq in enumerate(equities):
@@ -90,7 +91,7 @@ class TestBacktestResult:
     def test_summary_string(self):
         from apexfx.backtest.result import BacktestResult
         r = BacktestResult()
-        ts = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        ts = datetime(2025, 1, 1, tzinfo=UTC)
         r.record_equity(ts, 100000)
         r.record_equity(ts + timedelta(days=1), 101000)
         s = r.summary()
@@ -100,7 +101,7 @@ class TestBacktestResult:
     def test_to_dataframe(self):
         from apexfx.backtest.result import BacktestResult
         r = BacktestResult()
-        ts = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        ts = datetime(2025, 1, 1, tzinfo=UTC)
         for i in range(10):
             r.record_equity(ts + timedelta(hours=i), 100000 + i * 50)
         r.compute_metrics()
@@ -224,7 +225,7 @@ class TestBacktestEngine:
         close[400:] = close[399] - np.cumsum(np.abs(np.random.randn(200) * 0.002))
 
         bars = pd.DataFrame({
-            "time": [datetime(2025, 1, 1, tzinfo=timezone.utc) + timedelta(hours=i) for i in range(n)],
+            "time": [datetime(2025, 1, 1, tzinfo=UTC) + timedelta(hours=i) for i in range(n)],
             "open": close + np.random.randn(n) * 0.0001,
             "high": close + np.abs(np.random.randn(n) * 0.001),
             "low": close - np.abs(np.random.randn(n) * 0.001),
@@ -267,7 +268,7 @@ class TestHTMLReport:
         from apexfx.backtest.result import BacktestResult, Trade
 
         r = BacktestResult(initial_equity=100000)
-        ts = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        ts = datetime(2025, 1, 1, tzinfo=UTC)
         for i in range(100):
             r.record_equity(ts + timedelta(hours=i), 100000 + i * 50 + np.random.randn() * 200)
             r.record_exposure(ts + timedelta(hours=i), 0.05)
@@ -321,5 +322,3 @@ class TestWalkForward:
         for r in results:
             assert r.metrics["total_bars"] > 0
 
-
-from pathlib import Path

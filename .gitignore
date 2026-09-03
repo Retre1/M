@@ -18,6 +18,9 @@ data/synthetic/
 models/checkpoints/
 models/best/
 logs/
+
+# pytest --junitxml / --cov-report artifacts (CI uploads these)
+reports/
 ${paths.logs_dir}/
 
 .mypy_cache/

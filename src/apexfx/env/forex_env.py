@@ -14,6 +14,7 @@ Changes from original:
 
 from __future__ import annotations
 
+import contextlib
 from typing import Any
 
 import gymnasium as gym
@@ -25,9 +26,12 @@ from apexfx.env.obs_builder import ObservationBuilder
 from apexfx.env.reward import (
     BaseRewardFunction,
     HoldAwareReward,
+    ProfitFocusedReward,
     QuantumZScoreReward,
     TradingReward,
 )
+from apexfx.env.reward_v5 import RARAReward_v5
+from apexfx.risk.position_sizer import PositionSizer
 
 
 class SpreadModel:
@@ -164,11 +168,7 @@ class AdaptiveStopLoss:
             self._best_price = current_price
 
         # --- Break-even logic ---
-        if (
-            not self._breakeven_activated
-            and self._entry_price is not None
-            and current_atr > 0
-        ):
+        if not self._breakeven_activated and self._entry_price is not None and current_atr > 0:
             profit_distance = (current_price - self._entry_price) * direction
             if profit_distance >= current_atr * self._breakeven_atr_mult:
                 self._breakeven_activated = True
@@ -218,7 +218,7 @@ class PartialFillModel:
 
     # Session liquidity multipliers (higher = better fills)
     SESSION_FILL_MULT: dict[str, float] = {
-        "overlap": 1.0,     # Best liquidity
+        "overlap": 1.0,  # Best liquidity
         "london": 0.95,
         "new_york": 0.95,
         "tokyo": 0.85,
@@ -319,6 +319,7 @@ class ForexTradingEnv(gym.Env):
         n_time_features: int = 5,
         n_fundamental_features: int = 8,
         n_structure_features: int = 8,
+        n_fsd_features: int = 4,
         lookback: int = 100,
         reward_fn: BaseRewardFunction | None = None,
         max_drawdown_pct: float = 0.15,
@@ -328,12 +329,28 @@ class ForexTradingEnv(gym.Env):
         max_position_layers: int = 3,
         breakeven_atr_mult: float = 1.5,
         partial_fill_model: PartialFillModel | None = None,
+        risk_per_trade_pct: float = 0.01,
+        max_leverage: float = 10.0,
+        atr_stop_mult: float = 2.0,
     ) -> None:
         super().__init__()
 
         self._data = data
         self._initial_balance = initial_balance
         self._max_position_pct = max_position_pct
+        # The env used to size positions itself, as a share of notional:
+        #   max_lots = equity * max_position_pct / (price * contract_size)
+        # which on EURUSD is 0.09 lots and risks ~0.02% of equity against a
+        # 2xATR stop. The backtest went through PositionSizer and the env did
+        # not, so the agent was trained on one exposure scale and measured on
+        # another. Same sizer on both sides now.
+        self._position_sizer = PositionSizer(
+            max_position_pct=max_position_pct,
+            contract_size=contract_size,
+            risk_per_trade_pct=risk_per_trade_pct,
+            max_leverage=max_leverage,
+            atr_stop_mult=atr_stop_mult,
+        )
         self._base_transaction_cost = transaction_cost_pips * pip_value
         self._pip_value = pip_value
         self._contract_size = contract_size
@@ -354,6 +371,7 @@ class ForexTradingEnv(gym.Env):
             n_time_features=n_time_features,
             n_fundamental_features=n_fundamental_features,
             n_structure_features=n_structure_features,
+            n_fsd_features=n_fsd_features,
             lookback=lookback,
         )
 
@@ -370,23 +388,43 @@ class ForexTradingEnv(gym.Env):
         self._partial_fill_model = partial_fill_model
 
         # --- Spaces ---
-        self.action_space = spaces.Box(
-            low=-1.0, high=1.0, shape=(1,), dtype=np.float32
-        )
+        self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(1,), dtype=np.float32)
 
         market_flat_size = lookback * n_market_features
         time_flat_size = lookback * n_time_features
 
-        self.observation_space = spaces.Dict({
-            "market_features": spaces.Box(-np.inf, np.inf, shape=(market_flat_size,), dtype=np.float32),
-            "time_features": spaces.Box(-np.inf, np.inf, shape=(time_flat_size,), dtype=np.float32),
-            "trend_features": spaces.Box(-np.inf, np.inf, shape=(n_trend_features,), dtype=np.float32),
-            "reversion_features": spaces.Box(-np.inf, np.inf, shape=(n_reversion_features,), dtype=np.float32),
-            "regime_features": spaces.Box(-np.inf, np.inf, shape=(n_regime_features,), dtype=np.float32),
-            "fundamental_features": spaces.Box(-np.inf, np.inf, shape=(n_fundamental_features,), dtype=np.float32),
-            "structure_features": spaces.Box(-np.inf, np.inf, shape=(n_structure_features,), dtype=np.float32),
-            "position_state": spaces.Box(-np.inf, np.inf, shape=(8,), dtype=np.float32),
-        })
+        self.observation_space = spaces.Dict(
+            {
+                "market_features": spaces.Box(
+                    -np.inf, np.inf, shape=(market_flat_size,), dtype=np.float32
+                ),
+                "time_features": spaces.Box(
+                    -np.inf, np.inf, shape=(time_flat_size,), dtype=np.float32
+                ),
+                "trend_features": spaces.Box(
+                    -np.inf, np.inf, shape=(n_trend_features,), dtype=np.float32
+                ),
+                "reversion_features": spaces.Box(
+                    -np.inf, np.inf, shape=(n_reversion_features,), dtype=np.float32
+                ),
+                "regime_features": spaces.Box(
+                    -np.inf, np.inf, shape=(n_regime_features,), dtype=np.float32
+                ),
+                "fundamental_features": spaces.Box(
+                    -np.inf, np.inf, shape=(n_fundamental_features,), dtype=np.float32
+                ),
+                "structure_features": spaces.Box(
+                    -np.inf, np.inf, shape=(n_structure_features,), dtype=np.float32
+                ),
+                # Cross-sectional regime signal for gating v2. Present whether
+                # or not gating v2 is on, so the observation space does not
+                # change with that switch.
+                "fsd_features": spaces.Box(
+                    -np.inf, np.inf, shape=(n_fsd_features,), dtype=np.float32
+                ),
+                "position_state": spaces.Box(-np.inf, np.inf, shape=(8,), dtype=np.float32),
+            }
+        )
 
         # --- Precompute historical ATR for realistic cost modeling ---
         self._historical_atr: float | None = self._precompute_historical_atr()
@@ -405,6 +443,9 @@ class ForexTradingEnv(gym.Env):
         self._total_trades: int = 0
         self._trade_returns: list[float] = []
         self._equity_curve: list[float] = []
+        # Realized PnL produced during the current step (reset each step,
+        # accumulated by _close_position). Used by ProfitFocusedReward.
+        self._step_realized_pnl: float = 0.0
         # Pending action queue for execution delay simulation
         self._action_queue: list[float] = []
         # Position layer tracking for pyramiding
@@ -434,6 +475,7 @@ class ForexTradingEnv(gym.Env):
         self._total_trades = 0
         self._trade_returns = []
         self._equity_curve = [self._initial_balance]
+        self._step_realized_pnl = 0.0
         self._reward_fn.reset()
         self._stop_loss.reset()
         self._action_queue = []
@@ -449,6 +491,8 @@ class ForexTradingEnv(gym.Env):
         action_value = float(np.clip(action[0], -1.0, 1.0))
 
         prev_portfolio = self._portfolio_value
+        # Reset per-step realized PnL accumulator before any close happens
+        self._step_realized_pnl = 0.0
 
         # --- Advance market FIRST (look-ahead bias fix) ---
         # Action is decided based on current bar, but executed after delay
@@ -458,7 +502,7 @@ class ForexTradingEnv(gym.Env):
         self._action_queue.append(action_value)
         if self._current_idx < len(self._data):
             # Set Z-Score for reward before execution
-            if isinstance(self._reward_fn, QuantumZScoreReward) or isinstance(self._reward_fn, HoldAwareReward):
+            if isinstance(self._reward_fn, (QuantumZScoreReward, HoldAwareReward)):
                 z_score = self._get_current_zscore()
                 self._reward_fn.set_zscore(z_score)
 
@@ -480,7 +524,15 @@ class ForexTradingEnv(gym.Env):
                 self._close_position(current_price)
 
         # --- Feed position state to reward function ---
-        if isinstance(self._reward_fn, TradingReward):
+        if isinstance(self._reward_fn, ProfitFocusedReward):
+            self._reward_fn.set_trade_info(
+                action=action_value,
+                direction=self._position_direction,
+                unrealized_pnl=self._unrealized_pnl,
+                time_in_position=self._time_in_position,
+                realized_pnl_this_step=self._step_realized_pnl,
+            )
+        elif isinstance(self._reward_fn, TradingReward):
             # Check fundamental/structure features for reward signals
             news_active = False
             structure_aligned = False
@@ -491,7 +543,12 @@ class ForexTradingEnv(gym.Env):
                 if "structure_break_bull" in row.index and "structure_break_bear" in row.index:
                     bull_break = float(row.get("structure_break_bull", 0)) > 0.5
                     bear_break = float(row.get("structure_break_bear", 0)) > 0.5
-                    if self._position_direction > 0 and bull_break or self._position_direction < 0 and bear_break:
+                    if (
+                        self._position_direction > 0
+                        and bull_break
+                        or self._position_direction < 0
+                        and bear_break
+                    ):
                         structure_aligned = True
 
             self._reward_fn.set_trade_info(
@@ -509,6 +566,34 @@ class ForexTradingEnv(gym.Env):
                 direction=self._position_direction,
                 unrealized_pnl=self._unrealized_pnl,
                 time_in_position=self._time_in_position,
+            )
+        elif isinstance(self._reward_fn, RARAReward_v5):
+            fsd_regime = 1
+            structure_aligned = False
+            current_price = 1.0
+            if self._current_idx < len(self._data):
+                row = self._data.iloc[self._current_idx]
+                if "close" in row.index:
+                    current_price = float(row["close"])
+                if "fsd_regime" in row.index:
+                    val = row["fsd_regime"]
+                    if not np.isnan(val):
+                        fsd_regime = int(val)
+                if "structure_break_bull" in row.index and "structure_break_bear" in row.index:
+                    bull = float(row.get("structure_break_bull", 0)) > 0.5
+                    bear = float(row.get("structure_break_bear", 0)) > 0.5
+                    if (self._position_direction > 0 and bull) or (
+                        self._position_direction < 0 and bear
+                    ):
+                        structure_aligned = True
+            self._reward_fn.set_step_context(
+                position=float(self._position_direction) * float(self._position),
+                unrealized_pnl=self._unrealized_pnl,
+                realized_pnl=self._step_realized_pnl,
+                price=current_price,
+                time_in_position=self._time_in_position,
+                fsd_regime=fsd_regime,
+                structure_aligned=structure_aligned,
             )
 
         # --- Compute reward ---
@@ -542,7 +627,44 @@ class ForexTradingEnv(gym.Env):
         obs = self._get_observation()
         info = self._get_info()
 
+        if terminated or truncated:
+            info["episode_financials"] = self._episode_financials()
+
         return obs, float(reward), terminated, truncated, info
+
+    def _episode_financials(self) -> dict[str, Any]:
+        """Realised performance of the finished episode, for honest metrics.
+
+        Emitted once per episode so callbacks can score the agent on money
+        rather than on the shaped reward. Runs 1-6 were judged by ``mean/std``
+        over the reward series and a "profit factor" summed from episode
+        rewards, which is why PF read 0.0 in every stage of every run: the
+        rewards were negative throughout, so the positive-reward set was empty.
+        Neither number said anything about trading.
+
+        ``returns`` is the per-bar simple return of the equity curve, which is
+        what a financial Sharpe is defined over. ``trade_returns`` is per
+        closed trade, which is what a trade-level profit factor needs — the two
+        answer different questions and both are carried.
+        """
+        equity = np.asarray(self._equity_curve, dtype=np.float64)
+        if equity.size >= 2:
+            prev = equity[:-1]
+            # Guard the ruined-account case: equity can touch 0 on bankruptcy.
+            returns = np.divide(
+                np.diff(equity), prev, out=np.zeros(equity.size - 1), where=prev > 0,
+            )
+        else:
+            returns = np.zeros(0, dtype=np.float64)
+
+        return {
+            "returns": returns,
+            "trade_returns": np.asarray(self._trade_returns, dtype=np.float64),
+            "equity_start": float(equity[0]) if equity.size else self._initial_balance,
+            "equity_end": float(self._portfolio_value),
+            "n_trades": int(self._total_trades),
+            "n_bars": int(returns.size),
+        }
 
     def _get_current_zscore(self) -> float:
         """Extract current price Z-Score from features if available."""
@@ -604,10 +726,8 @@ class ForexTradingEnv(gym.Env):
         if self._current_idx < len(self._data):
             row = self._data.iloc[self._current_idx]
             if "time" in row.index:
-                try:
+                with contextlib.suppress(Exception):
                     hour = pd.Timestamp(row["time"]).hour
-                except Exception:
-                    pass
 
         current_atr = self._get_current_atr()
         historical_atr = self._historical_atr or current_atr
@@ -628,15 +748,20 @@ class ForexTradingEnv(gym.Env):
         row = self._data.iloc[self._current_idx]
         current_price = row["open"] if "open" in row.index else row["close"]
 
-        if abs(action) < 0.05:
+        if abs(action) < 0.01:
             target_direction = 0
             target_size = 0.0
         else:
             target_direction = 1 if action > 0 else -1
-            max_lots = (self._portfolio_value * self._max_position_pct) / (
-                current_price * self._contract_size
+            target_size = self._position_sizer.compute(
+                action=action,
+                portfolio_value=self._portfolio_value,
+                current_price=float(current_price),
+                current_atr=self._get_current_atr(),
+                historical_atr=self._historical_atr,
             )
-            target_size = abs(action) * max_lots
+            if target_size <= 0.0:
+                target_direction = 0
 
         # Close existing position if direction changes
         if self._position_direction != 0 and target_direction != self._position_direction:
@@ -661,10 +786,8 @@ class ForexTradingEnv(gym.Env):
             if self._current_idx < len(self._data):
                 row = self._data.iloc[self._current_idx]
                 if "time" in row.index:
-                    try:
+                    with contextlib.suppress(Exception):
                         hour = pd.Timestamp(row["time"]).hour
-                    except Exception:
-                        pass
             filled_size, fill_rate = self._partial_fill_model.simulate_fill(
                 size, hour, self._get_current_atr()
             )
@@ -681,7 +804,9 @@ class ForexTradingEnv(gym.Env):
         self._total_trades += 1
         self._stop_loss.reset()
         self._stop_loss.set_entry(price)
-        self._position_layers = [{"size": size, "entry_price": price, "entry_idx": self._current_idx}]
+        self._position_layers = [
+            {"size": size, "entry_price": price, "entry_idx": self._current_idx}
+        ]
 
     def _close_position(self, price: float) -> None:
         """Close the current position."""
@@ -694,10 +819,16 @@ class ForexTradingEnv(gym.Env):
 
         self._cash += pnl - cost
 
+        # Accumulate realized PnL (net of close costs) for the current step.
+        # ProfitFocusedReward consumes this to deliver the trade-close signal.
+        self._step_realized_pnl += pnl - cost
+
         # Record trade return (for Kelly criterion)
         notional = self._entry_price * self._position * self._contract_size
         trade_return = pnl / (notional + 1e-10)
         self._trade_returns.append(trade_return)
+        # Without this the sizer never leaves its warm-up quarter-Kelly.
+        self._position_sizer.update_trade_stats(trade_return)
 
         # Reset position state
         self._position = 0.0
@@ -716,16 +847,18 @@ class ForexTradingEnv(gym.Env):
 
         if size_diff > 0 and len(self._position_layers) < self._max_layers:
             # Adding to position — track as new layer
-            self._position_layers.append({
-                "size": size_diff,
-                "entry_price": price,
-                "entry_idx": self._current_idx,
-            })
+            self._position_layers.append(
+                {
+                    "size": size_diff,
+                    "entry_price": price,
+                    "entry_idx": self._current_idx,
+                }
+            )
             # Update weighted avg entry price for stop-loss
-            total_size = sum(l["size"] for l in self._position_layers)
+            total_size = sum(layer["size"] for layer in self._position_layers)
             if total_size > 0:
                 self._entry_price = (
-                    sum(l["size"] * l["entry_price"] for l in self._position_layers)
+                    sum(layer["size"] * layer["entry_price"] for layer in self._position_layers)
                     / total_size
                 )
 

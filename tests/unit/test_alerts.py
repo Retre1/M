@@ -10,8 +10,6 @@ Covers:
 
 from __future__ import annotations
 
-import asyncio
-import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -21,7 +19,6 @@ from apexfx.alerts.risk_alerts import RiskAlertMonitor
 from apexfx.alerts.telegram_bot import TelegramAlerter
 from apexfx.alerts.webhook import WebhookAlerter
 from apexfx.config.schema import AlertConfig
-
 
 # ---------------------------------------------------------------------------
 # AlertLevel

@@ -7,7 +7,7 @@ by producing bars at a constant *information* rate rather than constant *time* r
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import pandas as pd

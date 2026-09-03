@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import pywt
 from scipy.fft import fft, fftfreq
+from scipy.signal import find_peaks
 
 from apexfx.features import BaseFeatureExtractor
 
@@ -95,8 +96,22 @@ class SpectralExtractor(BaseFeatureExtractor):
 
         return result
 
+    # A Hann window has a coherent gain of 0.5: windowing halves the amplitude
+    # of every component. Without dividing it back out, fft_amplitude_N reported
+    # exactly half the true amplitude (measured 0.498 for a unit sine).
+    _HANN_COHERENT_GAIN = 0.5
+
     def _compute_fft(self, signal: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """Compute FFT and return top-N (period, amplitude) pairs sorted by amplitude."""
+        """Return the top-N spectral *peaks* as (period, amplitude) pairs.
+
+        Peaks, not bins. Taking the N largest bins looked equivalent but is not:
+        the Hann window spreads each component over its neighbours, so the
+        largest bins cluster around one peak. On a mixture of a period-20
+        component (amplitude 1.0) and a period-8 component (amplitude 0.3) the
+        old code returned periods 19.69, 21.33 and 18.29 — the same peak three
+        times — and never reported the period-8 component at all. Features 2
+        and 3 were leakage artefacts rather than independent information.
+        """
         n = len(signal)
         # Apply Hann window to reduce spectral leakage
         windowed = signal * np.hanning(n)
@@ -107,16 +122,21 @@ class SpectralExtractor(BaseFeatureExtractor):
         # Only positive frequencies, skip DC component
         pos_mask = frequencies > 0
         pos_freq = frequencies[pos_mask]
-        pos_amp = 2.0 / n * np.abs(yf[pos_mask])
+        pos_amp = 2.0 / n * np.abs(yf[pos_mask]) / self._HANN_COHERENT_GAIN
 
         if len(pos_amp) == 0:
             return np.array([]), np.array([])
 
-        # Sort by amplitude (descending)
-        sorted_idx = np.argsort(pos_amp)[::-1]
-        top_idx = sorted_idx[: self._top_n]
+        # Local maxima only, so each reported component is a distinct cycle.
+        peak_idx, _ = find_peaks(pos_amp)
+        if len(peak_idx) == 0:
+            # Monotonic spectrum (very short or heavily damped window) — fall
+            # back to the strongest bin so the feature is still populated.
+            peak_idx = np.array([int(np.argmax(pos_amp))])
 
-        periods = 1.0 / pos_freq[top_idx]  # Convert frequency to period (in bars)
-        amplitudes = pos_amp[top_idx]
+        strongest = peak_idx[np.argsort(pos_amp[peak_idx])[::-1]][: self._top_n]
+
+        periods = 1.0 / pos_freq[strongest]  # frequency -> period in bars
+        amplitudes = pos_amp[strongest]
 
         return periods, amplitudes

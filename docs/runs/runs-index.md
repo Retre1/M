@@ -1,5 +1,9 @@
 # Training Runs
 
+> ⚠️ Метрики `sharpe` / `profit_factor` в прогонах 1–6 недействительны — см.
+> [[../analysis/metrics-invalidation|Анализ: метрики прогонов 1–6
+> недействительны]]. Сопоставимы только OOS-бэктесты.
+
 | Run | Date | Config | Result | Key Insight |
 |-----|------|--------|--------|-------------|
 | [[run-001-baseline]] | 2026-04 | TradingReward (10 comp) | -1.22%, WR 38%, PF 0.67 | Reward too complex, agent → "do nothing" |

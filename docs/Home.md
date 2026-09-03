@@ -4,9 +4,13 @@
 
 ## Quick Links
 
+- [[plan-to-production|План до продакшена]] — фазы, ворота, критерии отказа
+- [[training-strategy|Стратегия обучения]] — почему узкое место в данных, а не в алгоритме
+- [[worklog|Рабочий журнал]] — решения, ловушки репозитория, разобранные ошибки
 - [[architecture/system-overview|System Overview]]
+- [[architecture/tz-architecture|ТЗ — Архитектура программного комплекса]]
 - [[research/papers-index|Papers Index]]
-- [[runs/runs-index|Training Runs]]
+- [[runs/runs-index|Training Runs]] — ⚠️ метрики прогонов 1–6 недействительны, см. [[analysis/metrics-invalidation|разбор]]
 - [[decisions/decisions-index|Decision Log]]
 
 ## Current Status

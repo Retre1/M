@@ -15,7 +15,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
     git \
-    && rm -rf /var/lib/apt/lists/*
+    tzdata \
+    && rm -rf /var/lib/apt/lists/* \
+    && python -m pip install --upgrade pip setuptools wheel
+# NB: v2.0-quantum-hybrid also ran `update-alternatives` for python3.11 here.
+# That branch targeted an Ubuntu base; on python:3.11-slim the interpreter
+# already is 3.11 and lives in /usr/local/bin, so the call would fail.
 
 WORKDIR /app
 
@@ -23,7 +28,11 @@ WORKDIR /app
 FROM base AS deps
 
 COPY pyproject.toml ./
-# Install core deps first (cached layer)
+# Install core deps first (cached layer).
+# v2.0-quantum-hybrid hardcoded the dependency list here; that duplicate
+# drifted from pyproject.toml (it was the only place declaring sb3-contrib).
+# Installing from pyproject keeps a single source of truth — the packages that
+# branch added (sb3-contrib, tensorboard, rich, tqdm) now come from there.
 RUN pip install --no-cache-dir -e ".[dashboard,nlp]" 2>/dev/null || \
     pip install --no-cache-dir \
     torch>=2.0 --index-url https://download.pytorch.org/whl/cpu \
@@ -32,11 +41,15 @@ RUN pip install --no-cache-dir -e ".[dashboard,nlp]" 2>/dev/null || \
 # ---------- Stage 3: Application ----------
 FROM deps AS app
 
+COPY pyproject.toml ./
 COPY src/ ./src/
 COPY scripts/ ./scripts/
 COPY configs/ ./configs/
 COPY tests/ ./tests/
 COPY Makefile ./
+
+# Install package now that src/ is present (hatchling needs README.md).
+RUN touch README.md && pip install --no-cache-dir -e .
 
 # Create runtime directories
 RUN mkdir -p data/raw data/processed data/synthetic \

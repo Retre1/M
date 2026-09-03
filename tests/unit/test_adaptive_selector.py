@@ -14,10 +14,10 @@ from apexfx.features.adaptive_selector import (
 )
 from apexfx.features.importance_tracker import FeatureImportanceTracker
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def feature_names() -> list[str]:
@@ -26,9 +26,7 @@ def feature_names() -> list[str]:
 
 @pytest.fixture
 def tracker(feature_names: list[str]) -> FeatureImportanceTracker:
-    return FeatureImportanceTracker(
-        feature_names=feature_names, ema_alpha=0.5, history_size=2000
-    )
+    return FeatureImportanceTracker(feature_names=feature_names, ema_alpha=0.5, history_size=2000)
 
 
 @pytest.fixture
@@ -56,6 +54,7 @@ def _make_tensor(values: list[float]) -> torch.Tensor:
 # Test: initial state — all features active
 # ---------------------------------------------------------------------------
 
+
 class TestInitialState:
     def test_all_features_active(self, selector: AdaptiveFeatureSelector, feature_names: list[str]):
         assert selector.get_active_features() == set(feature_names)
@@ -68,8 +67,11 @@ class TestInitialState:
 # Test: evaluate returns None during cooldown
 # ---------------------------------------------------------------------------
 
+
 class TestCooldown:
-    def test_returns_none_before_cooldown(self, selector: AdaptiveFeatureSelector, tracker: FeatureImportanceTracker):
+    def test_returns_none_before_cooldown(
+        self, selector: AdaptiveFeatureSelector, tracker: FeatureImportanceTracker
+    ):
         # Feed some data so tracker has state
         tracker.update(_uniform_tensor(20, 0.05))
         selector.tick()
@@ -77,7 +79,9 @@ class TestCooldown:
         # Only 2 ticks, cooldown is 3
         assert selector.evaluate() is None
 
-    def test_returns_result_after_cooldown(self, selector: AdaptiveFeatureSelector, tracker: FeatureImportanceTracker):
+    def test_returns_result_after_cooldown(
+        self, selector: AdaptiveFeatureSelector, tracker: FeatureImportanceTracker
+    ):
         tracker.update(_uniform_tensor(20, 0.05))
         for _ in range(3):
             selector.tick()
@@ -89,6 +93,7 @@ class TestCooldown:
 # ---------------------------------------------------------------------------
 # Test: evaluate detects low-importance features
 # ---------------------------------------------------------------------------
+
 
 class TestDetectLowImportance:
     def test_disables_drifted_low_importance_features(self, tracker: FeatureImportanceTracker):
@@ -117,7 +122,9 @@ class TestDetectLowImportance:
         # feat_5 should be flagged for disable (importance dropped >50% and < min)
         assert "feat_5" in result.features_to_disable
 
-    def test_does_not_disable_when_importance_above_threshold(self, tracker: FeatureImportanceTracker):
+    def test_does_not_disable_when_importance_above_threshold(
+        self, tracker: FeatureImportanceTracker
+    ):
         n = 20
         # All features stay at decent importance
         for _ in range(10):
@@ -139,6 +146,7 @@ class TestDetectLowImportance:
 # ---------------------------------------------------------------------------
 # Test: max_disable_pct limit
 # ---------------------------------------------------------------------------
+
 
 class TestMaxDisablePct:
     def test_caps_disables_per_cycle(self, tracker: FeatureImportanceTracker):
@@ -168,6 +176,7 @@ class TestMaxDisablePct:
 # ---------------------------------------------------------------------------
 # Test: always_on features never disabled
 # ---------------------------------------------------------------------------
+
 
 class TestAlwaysOn:
     def test_always_on_never_disabled(self, tracker: FeatureImportanceTracker):
@@ -199,6 +208,7 @@ class TestAlwaysOn:
 # ---------------------------------------------------------------------------
 # Test: re-enable when importance recovers
 # ---------------------------------------------------------------------------
+
 
 class TestReEnable:
     def test_reenable_when_importance_recovers(self, tracker: FeatureImportanceTracker):
@@ -243,6 +253,7 @@ class TestReEnable:
 # Test: force_enable / force_disable
 # ---------------------------------------------------------------------------
 
+
 class TestForceToggle:
     def test_force_disable(self, selector: AdaptiveFeatureSelector):
         selector.force_disable("feat_5")
@@ -266,6 +277,7 @@ class TestForceToggle:
 # Test: reset re-enables all
 # ---------------------------------------------------------------------------
 
+
 class TestReset:
     def test_reset_reenables_all(self, selector: AdaptiveFeatureSelector, feature_names: list[str]):
         selector.force_disable("feat_5")
@@ -280,6 +292,7 @@ class TestReset:
 # ---------------------------------------------------------------------------
 # Test: save/load roundtrip
 # ---------------------------------------------------------------------------
+
 
 class TestPersistence:
     def test_save_load_roundtrip(self, selector: AdaptiveFeatureSelector, tmp_path: Path):
@@ -310,6 +323,7 @@ class TestPersistence:
 # ---------------------------------------------------------------------------
 # Test: drift_scores calculation
 # ---------------------------------------------------------------------------
+
 
 class TestDriftScores:
     def test_drift_scores_populated(self, tracker: FeatureImportanceTracker):
@@ -360,12 +374,11 @@ class TestDriftScores:
 # Test: empty tracker history (no crash)
 # ---------------------------------------------------------------------------
 
+
 class TestEmptyTracker:
     def test_evaluate_with_no_updates(self, feature_names: list[str]):
         tracker = FeatureImportanceTracker(feature_names=feature_names, ema_alpha=0.5)
-        selector = AdaptiveFeatureSelector(
-            tracker=tracker, min_importance=0.01, cooldown_bars=1
-        )
+        selector = AdaptiveFeatureSelector(tracker=tracker, min_importance=0.01, cooldown_bars=1)
         selector.tick()
         result = selector.evaluate()
         assert result is not None
@@ -375,9 +388,7 @@ class TestEmptyTracker:
 
     def test_evaluate_with_single_update(self, tracker: FeatureImportanceTracker):
         tracker.update(_uniform_tensor(20, 0.05))
-        selector = AdaptiveFeatureSelector(
-            tracker=tracker, min_importance=0.01, cooldown_bars=1
-        )
+        selector = AdaptiveFeatureSelector(tracker=tracker, min_importance=0.01, cooldown_bars=1)
         selector.tick()
         result = selector.evaluate()
         assert result is not None
@@ -388,6 +399,7 @@ class TestEmptyTracker:
 # ---------------------------------------------------------------------------
 # Test: FeatureSelectionResult dataclass
 # ---------------------------------------------------------------------------
+
 
 class TestFeatureSelectionResult:
     def test_result_fields(self):

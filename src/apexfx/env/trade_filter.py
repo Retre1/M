@@ -148,16 +148,40 @@ class StrategyFilter:
         fund = np.asarray(fund, dtype=np.float64)
         struct = np.asarray(struct, dtype=np.float64)
 
-        news_active = float(fund[self._IDX_NEWS_IMPACT_ACTIVE]) if len(fund) > self._IDX_NEWS_IMPACT_ACTIVE else 0.0
-        time_to_event = float(fund[self._IDX_TIME_TO_NEXT_EVENT]) if len(fund) > self._IDX_TIME_TO_NEXT_EVENT else 1.0
-        fundamental_bias = float(fund[self._IDX_FUNDAMENTAL_BIAS]) if len(fund) > self._IDX_FUNDAMENTAL_BIAS else 0.0
-        conflicting = float(fund[self._IDX_CONFLICTING_SIGNALS]) if len(fund) > self._IDX_CONFLICTING_SIGNALS else 0.0
+        news_active = (
+            float(fund[self._IDX_NEWS_IMPACT_ACTIVE])
+            if len(fund) > self._IDX_NEWS_IMPACT_ACTIVE
+            else 0.0
+        )
+        time_to_event = (
+            float(fund[self._IDX_TIME_TO_NEXT_EVENT])
+            if len(fund) > self._IDX_TIME_TO_NEXT_EVENT
+            else 1.0
+        )
+        fundamental_bias = (
+            float(fund[self._IDX_FUNDAMENTAL_BIAS])
+            if len(fund) > self._IDX_FUNDAMENTAL_BIAS
+            else 0.0
+        )
+        conflicting = (
+            float(fund[self._IDX_CONFLICTING_SIGNALS])
+            if len(fund) > self._IDX_CONFLICTING_SIGNALS
+            else 0.0
+        )
 
-        break_bull = float(struct[self._IDX_STRUCTURE_BREAK_BULL]) if len(struct) > self._IDX_STRUCTURE_BREAK_BULL else 0.0
-        break_bear = float(struct[self._IDX_STRUCTURE_BREAK_BEAR]) if len(struct) > self._IDX_STRUCTURE_BREAK_BEAR else 0.0
+        break_bull = (
+            float(struct[self._IDX_STRUCTURE_BREAK_BULL])
+            if len(struct) > self._IDX_STRUCTURE_BREAK_BULL
+            else 0.0
+        )
+        break_bear = (
+            float(struct[self._IDX_STRUCTURE_BREAK_BEAR])
+            if len(struct) > self._IDX_STRUCTURE_BREAK_BEAR
+            else 0.0
+        )
 
         has_position = abs(current_position) > 0.01
-        is_new_entry = not has_position and abs(proposed_action) > 0.05
+        is_new_entry = not has_position and abs(proposed_action) > 0.01
         is_adding = has_position and self._same_direction(proposed_action, current_position)
 
         # --- Rule 1: Conflicting signals → force close ---
@@ -255,7 +279,11 @@ class StrategyFilter:
         # Same training_mode bypass rationale as rules 2/3: time_to_event=0.0
         # under no-calendar conditions would scale every position to a tiny
         # fraction and starve the agent of meaningful PnL signal.
-        if not self._training_mode and time_to_event < self._pre_news_time_threshold and has_position:
+        if (
+            not self._training_mode
+            and time_to_event < self._pre_news_time_threshold
+            and has_position
+        ):
             return FilterDecision(
                 allowed=True,
                 scale=self._reduce_scale_pre_news,

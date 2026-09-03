@@ -234,7 +234,6 @@ class CentralBankExtractor(BaseFeatureExtractor):
         In backtesting, returns zeros (no historical statement data).
         For live, call update_statement() then extract().
         """
-        n = len(bars)
         result = pd.DataFrame(index=bars.index)
 
         # Get current stances

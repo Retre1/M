@@ -47,6 +47,7 @@ class Strategy(Protocol):
 @dataclass
 class OpenPosition:
     """Tracks an open position during backtesting."""
+
     symbol: str
     direction: int
     entry_price: float
@@ -56,17 +57,24 @@ class OpenPosition:
     take_profit: float | None = None
     entry_bar_idx: int = 0
     notional: float = 0.0
+    # Fixed at entry and never trailed — R is measured against what was risked
+    # when the position was taken, not against wherever the stop ended up.
+    initial_risk: float = 0.0
 
 
 @dataclass
 class BacktestConfig:
     """Configuration for a backtest run."""
+
     initial_equity: float = 100_000.0
     commission_per_lot: float = 7.0  # $7 per round-trip lot
     slippage_pips: float = 0.5  # avg slippage in pips
     pip_value: float = 0.0001  # for EURUSD
     contract_size: int = 100_000
-    spread_pips: float = 1.0  # simulated spread
+    # Retail MT5 on EURUSD runs 1.5-3.0 pips; the audit recommends testing at
+    # 2.0-2.5 and calls the old 1.0 default optimistic. A backtest that clears
+    # its costs only at 1.0 pip has not cleared them.
+    spread_pips: float = 2.0  # simulated spread, charged half on entry, half on exit
     atr_stop_mult: float = 2.0  # stop loss = ATR * multiplier
     atr_tp_mult: float = 3.0  # take profit = ATR * multiplier
     use_trailing_stop: bool = True
@@ -185,7 +193,9 @@ class BacktestEngine:
                         current_price=float(bar["close"]),
                         current_spread=self._config.spread_pips * self._config.pip_value,
                         current_atr=atr_val,
-                        historical_atr=np.nanmean(self._atr[max(0, i - 100): i]) if i > 0 else atr_val,
+                        historical_atr=np.nanmean(self._atr[max(0, i - 100) : i])
+                        if i > 0
+                        else atr_val,
                         spread_limit=self._config.spread_pips * self._config.pip_value * 3,
                     )
 
@@ -277,10 +287,7 @@ class BacktestEngine:
                 return True
 
         # Open new position
-        if self._position is None and abs(action) >= 0.05:
-            return True
-
-        return False
+        return bool(self._position is None and abs(action) >= 0.05)
 
     def _execute_signal(
         self,
@@ -295,21 +302,25 @@ class BacktestEngine:
         direction = int(np.sign(action))
 
         # Close existing position if direction changes
-        if self._position is not None:
-            if direction != self._position.direction or direction == 0:
-                self._close_position(bar, bar_idx, timestamp, "signal")
-                if direction == 0:
-                    return
+        if self._position is not None and (direction != self._position.direction or direction == 0):
+            self._close_position(bar, bar_idx, timestamp, "signal")
+            if direction == 0:
+                return
 
         # Open new position
         if self._position is None and direction != 0:
             entry_price = float(bar["close"])
-            # Apply slippage
+            # Cross the spread, then apply slippage. Bars carry mid/close, so
+            # entering pays half the spread (buy at ask, sell at bid); the
+            # other half is paid on exit. Until this was added, spread_pips
+            # only fed the risk manager's spread check and a round trip was
+            # free of it — understating the cost of every backtested trade.
+            half_spread = self._config.spread_pips * self._config.pip_value / 2
             slip = self._config.slippage_pips * self._config.pip_value
             if direction > 0:
-                entry_price += slip  # Buy higher
+                entry_price += half_spread + slip  # Buy at ask, slipping higher
             else:
-                entry_price -= slip  # Sell lower
+                entry_price -= half_spread + slip  # Sell at bid, slipping lower
 
             # Compute stop loss and take profit
             stop_loss = None
@@ -325,6 +336,11 @@ class BacktestEngine:
                     take_profit = entry_price - tp_distance
 
             notional = volume * self._config.contract_size * entry_price
+            initial_risk = (
+                abs(entry_price - stop_loss) * volume * self._config.contract_size
+                if stop_loss is not None
+                else 0.0
+            )
 
             self._position = OpenPosition(
                 symbol=self._config.symbol,
@@ -334,6 +350,7 @@ class BacktestEngine:
                 volume=volume,
                 stop_loss=stop_loss,
                 take_profit=take_profit,
+                initial_risk=initial_risk,
                 entry_bar_idx=bar_idx,
                 notional=notional,
             )
@@ -354,27 +371,38 @@ class BacktestEngine:
             return
 
         exit_price = float(bar["close"])
-        # Apply slippage
+        # The other half of the spread, plus slippage (see _execute_signal).
+        half_spread = self._config.spread_pips * self._config.pip_value / 2
         slip = self._config.slippage_pips * self._config.pip_value
         if self._position.direction > 0:
-            exit_price -= slip  # Sell lower
+            exit_price -= half_spread + slip  # Sell at bid, slipping lower
         else:
-            exit_price += slip  # Cover higher
+            exit_price += half_spread + slip  # Cover at ask, slipping higher
 
         # Compute P&L
         price_diff = exit_price - self._position.entry_price
-        pnl = price_diff * self._position.direction * self._position.volume * self._config.contract_size
+        pnl = (
+            price_diff
+            * self._position.direction
+            * self._position.volume
+            * self._config.contract_size
+        )
 
-        # Deduct close commission
-        commission = self._position.volume * self._config.commission_per_lot
-        pnl -= commission
+        # Commission is charged per leg. The entry leg already came out of
+        # equity when the position opened, so only the exit leg moves equity
+        # here — but the *trade* cost both, and profit_factor is computed from
+        # trade P&L. Reporting one leg understated every round trip by
+        # commission_per_lot * volume and flattered the gate-2 metric.
+        commission_per_leg = self._position.volume * self._config.commission_per_lot
+        equity_delta = pnl - commission_per_leg
+        round_trip_pnl = pnl - 2 * commission_per_leg
 
-        # Update equity
-        self._equity += pnl
+        # Update equity: the entry leg was deducted at open, not here.
+        self._equity += equity_delta
 
-        # Compute pnl_pct relative to equity at entry
-        entry_equity = self._equity - pnl  # Approximate equity at entry
-        pnl_pct = pnl / entry_equity if entry_equity > 0 else 0.0
+        # Return on the equity the trade was opened against.
+        entry_equity = self._equity - equity_delta
+        pnl_pct = round_trip_pnl / entry_equity if entry_equity > 0 else 0.0
 
         trade = Trade(
             entry_time=self._position.entry_time,
@@ -384,15 +412,18 @@ class BacktestEngine:
             entry_price=self._position.entry_price,
             exit_price=exit_price,
             volume=self._position.volume,
-            pnl=pnl,
+            pnl=round_trip_pnl,
             pnl_pct=pnl_pct,
-            commission=commission * 2,  # round-trip
+            commission=2 * commission_per_leg,  # round-trip
             bars_held=bar_idx - self._position.entry_bar_idx,
             exit_reason=reason,
+            risk_amount=self._position.initial_risk,
         )
 
         self._result.record_trade(trade)
-        self._risk_manager.record_trade(pnl, pnl_pct)
+        # Kelly statistics are about the economics of the trade, so they take
+        # the round trip rather than the equity movement at close.
+        self._risk_manager.record_trade(round_trip_pnl, pnl_pct)
 
         logger.debug(
             "Trade closed",
@@ -459,8 +490,10 @@ class BacktestEngine:
 
         price_diff = float(bar["close"]) - self._position.entry_price
         unrealized = (
-            price_diff * self._position.direction
-            * self._position.volume * self._config.contract_size
+            price_diff
+            * self._position.direction
+            * self._position.volume
+            * self._config.contract_size
         )
         return self._equity + unrealized
 
@@ -501,6 +534,7 @@ class BacktestEngine:
 # ------------------------------------------------------------------
 # Walk-Forward Validation
 # ------------------------------------------------------------------
+
 
 def walk_forward_backtest(
     bars: pd.DataFrame,

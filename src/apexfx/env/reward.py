@@ -365,9 +365,13 @@ class HoldAwareReward(BaseRewardFunction):
         churn_penalty = 0.0
         was_in_position = self._prev_position_direction != 0
         now_flat = self._position_direction == 0
-        if was_in_position and now_flat:
-            if self._prev_unrealized_pnl > 0 and self._time_in_position < self.min_hold_bars:
-                churn_penalty = self.churn_penalty
+        if (
+            was_in_position
+            and now_flat
+            and self._prev_unrealized_pnl > 0
+            and self._time_in_position < self.min_hold_bars
+        ):
+            churn_penalty = self.churn_penalty
 
         # Z-Score bonus (same as QuantumZScoreReward)
         quantum_bonus = 0.0
@@ -715,3 +719,185 @@ class OnlineSharpeTracker:
 
     def n_samples(self) -> int:
         return len(self._returns)
+
+
+class ProfitFocusedReward(BaseRewardFunction):
+    """Profit-focused reward: realized PnL dominates, minimal auxiliary noise.
+
+    The previous ``TradingReward`` had 10 components (vol-adjust, CVaR, churn,
+    DD, hold, winner, quick-cut, news, structure, cost). That's great in theory
+    but produces a confused gradient — the agent learns to minimize penalties
+    rather than find profitable setups, collapsing into a "do nothing" policy.
+    The current production model exhibits this: -1.22% return, 38% win rate,
+    profit factor 0.67, only 22 trades in 3550 bars.
+
+    This reward strips everything down to the three signals that matter:
+
+    1. **Realized PnL (dominant)** — when a trade closes, reward ∝ actual
+       dollars made/lost. This is ground truth.
+    2. **Unrealized PnL delta (dense)** — per-step change in floating PnL
+       gives a smooth gradient so the agent can learn between closes.
+    3. **Trade cost (small)** — a tiny fixed penalty per new entry to
+       discourage blind flipping.
+
+    Plus one carefully tuned inactivity penalty so the agent cannot hide in
+    the "no-trade" local minimum for entire episodes.
+
+    The env must call :meth:`set_trade_info` each step with ``direction``,
+    ``unrealized_pnl``, ``time_in_position``, and ``realized_pnl_this_step``.
+    """
+
+    def __init__(
+        self,
+        realized_pnl_weight: float = 3000.0,
+        unrealized_delta_weight: float = 400.0,
+        trade_cost: float = 0.05,
+        inactivity_penalty: float = 0.002,
+        inactivity_grace: int = 30,
+        max_inactivity_bars: int = 150,
+        loss_asymmetry: float = 1.15,
+        reward_clip: float = 25.0,
+    ) -> None:
+        """Initialize profit-focused reward.
+
+        Args:
+            realized_pnl_weight: Multiplier on realized PnL at trade close
+                (expressed as fraction of starting balance).
+            unrealized_delta_weight: Multiplier on per-step change in
+                unrealized PnL (fraction of starting balance).
+            trade_cost: Fixed penalty per new entry (spread + slippage proxy).
+            inactivity_penalty: Per-bar penalty applied after ``inactivity_grace``
+                bars flat. Tiny but nonzero so "do nothing" is not optimal.
+            inactivity_grace: Number of flat bars before inactivity penalty
+                kicks in.
+            max_inactivity_bars: Hard ceiling — after this many flat bars,
+                penalty doubles each bar to force exploration.
+            loss_asymmetry: Multiplier applied to negative rewards
+                (teaches mild risk aversion without crushing exploration).
+            reward_clip: Symmetric clip for numerical stability.
+        """
+        self.realized_pnl_weight = realized_pnl_weight
+        self.unrealized_delta_weight = unrealized_delta_weight
+        self.trade_cost = trade_cost
+        self.inactivity_penalty = inactivity_penalty
+        self.inactivity_grace = inactivity_grace
+        self.max_inactivity_bars = max_inactivity_bars
+        self.loss_asymmetry = loss_asymmetry
+        self.reward_clip = reward_clip
+
+        self._prev_position_direction: int = 0
+        self._position_direction: int = 0
+        self._prev_unrealized_pnl: float = 0.0
+        self._unrealized_pnl: float = 0.0
+        self._realized_pnl_this_step: float = 0.0
+        self._time_in_position: int = 0
+        self._flat_bars: int = 0
+
+    def reset(self) -> None:
+        self._prev_position_direction = 0
+        self._position_direction = 0
+        self._prev_unrealized_pnl = 0.0
+        self._unrealized_pnl = 0.0
+        self._realized_pnl_this_step = 0.0
+        self._time_in_position = 0
+        self._flat_bars = 0
+
+    def set_trade_info(
+        self,
+        action: float,
+        direction: int,
+        unrealized_pnl: float,
+        time_in_position: int,
+        realized_pnl_this_step: float = 0.0,
+        news_active: bool = False,
+        structure_aligned: bool = False,
+    ) -> None:
+        """Set current position state — called by env before compute().
+
+        Args:
+            action: Unused (kept for compatibility with TradingReward API).
+            direction: Current position direction (-1/0/+1).
+            unrealized_pnl: Current floating PnL in account currency.
+            time_in_position: Bars since position was opened.
+            realized_pnl_this_step: PnL realized this bar (nonzero only when
+                a trade just closed). Positive for wins, negative for losses.
+            news_active: Unused (API compatibility).
+            structure_aligned: Unused (API compatibility).
+        """
+        del action, news_active, structure_aligned  # unused
+        self._prev_position_direction = self._position_direction
+        self._prev_unrealized_pnl = self._unrealized_pnl
+        self._position_direction = direction
+        self._unrealized_pnl = unrealized_pnl
+        self._time_in_position = time_in_position
+        self._realized_pnl_this_step = realized_pnl_this_step
+
+    def set_atr(self, atr: float | None) -> None:  # noqa: ARG002
+        """Unused — kept for API compatibility with TradingReward."""
+
+    def compute(self, portfolio_value: float, prev_portfolio_value: float) -> float:
+        if prev_portfolio_value <= 0 or portfolio_value <= 0:
+            return -self.reward_clip
+
+        # Track flat streak for inactivity penalty
+        if self._position_direction == 0 and self._prev_position_direction == 0:
+            self._flat_bars += 1
+        else:
+            self._flat_bars = 0
+
+        # --- 1. Realized PnL (dominant signal) ---
+        # Expressed as fraction of starting balance so magnitudes stay sane
+        realized_component = 0.0
+        if abs(self._realized_pnl_this_step) > 1e-8:
+            pnl_frac = self._realized_pnl_this_step / prev_portfolio_value
+            realized_component = pnl_frac * self.realized_pnl_weight
+
+        # --- 2. Unrealized PnL delta (dense signal between closes) ---
+        unrealized_component = 0.0
+        if self._position_direction != 0 and self._prev_position_direction != 0:
+            delta = self._unrealized_pnl - self._prev_unrealized_pnl
+            delta_frac = delta / prev_portfolio_value
+            unrealized_component = delta_frac * self.unrealized_delta_weight
+
+        # --- 3. Trade cost on new entries ---
+        cost_component = 0.0
+        is_new_entry = (
+            self._prev_position_direction == 0 and self._position_direction != 0
+        ) or (
+            self._prev_position_direction != 0
+            and self._position_direction != 0
+            and self._prev_position_direction != self._position_direction
+        )
+        if is_new_entry:
+            cost_component = -self.trade_cost
+
+        # --- 4. Inactivity penalty (prevents "do nothing" local minimum) ---
+        # Two-segment linear ramp: gentle slope below max_inactivity_bars,
+        # then a steep-but-continuous slope beyond it. Previous design used
+        # an exponential second segment which produced a gradient spike at
+        # the boundary; a piecewise-linear ramp keeps the critic target
+        # smooth while still delivering strong pressure to move.
+        inactivity_component = 0.0
+        if self._flat_bars > self.inactivity_grace:
+            excess = self._flat_bars - self.inactivity_grace
+            ramp_span = max(1, self.max_inactivity_bars - self.inactivity_grace)
+            if self._flat_bars <= self.max_inactivity_bars:
+                inactivity_component = -self.inactivity_penalty * excess
+            else:
+                base = self.inactivity_penalty * ramp_span
+                overflow = self._flat_bars - self.max_inactivity_bars
+                # Steep-but-linear continuation (5x slope) keeps gradient continuous
+                inactivity_component = -(base + self.inactivity_penalty * 5.0 * overflow)
+
+        reward = (
+            realized_component
+            + unrealized_component
+            + cost_component
+            + inactivity_component
+        )
+
+        # Mild loss asymmetry (risk-aversion nudge without crushing exploration)
+        if reward < 0:
+            reward *= self.loss_asymmetry
+
+        return float(np.clip(reward, -self.reward_clip, self.reward_clip))

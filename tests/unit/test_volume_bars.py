@@ -13,12 +13,14 @@ from apexfx.data.volume_bar_aggregator import (
     VolumeBarAggregator,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _tick(seconds_offset: float, bid: float, ask: float, volume: float, base: datetime | None = None):
+
+def _tick(
+    seconds_offset: float, bid: float, ask: float, volume: float, base: datetime | None = None
+):
     """Create a tick tuple for convenience."""
     base = base or datetime(2025, 1, 1, 12, 0, 0, tzinfo=UTC)
     return base + timedelta(seconds=seconds_offset), bid, ask, volume
@@ -33,6 +35,7 @@ def _tick_df(ticks: list[tuple]) -> pd.DataFrame:
 # VolumeBarAggregator — basic threshold
 # ---------------------------------------------------------------------------
 
+
 class TestVolumeBarAggregatorBasic:
     def test_single_bar_finalization(self):
         """Bar finalizes when cumulative volume >= threshold."""
@@ -44,7 +47,9 @@ class TestVolumeBarAggregatorBasic:
         for i in range(10):
             result = agg.process_tick(
                 time=base + timedelta(seconds=i),
-                bid=1.1000, ask=1.1002, volume=10.0,
+                bid=1.1000,
+                ask=1.1002,
+                volume=10.0,
             )
         assert result is not None
         assert isinstance(result, FinalizedBar)
@@ -59,7 +64,9 @@ class TestVolumeBarAggregatorBasic:
         for i in range(5):
             result = agg.process_tick(
                 time=base + timedelta(seconds=i),
-                bid=1.1000, ask=1.1002, volume=10.0,
+                bid=1.1000,
+                ask=1.1002,
+                volume=10.0,
             )
             assert result is None
         assert agg.bars_generated == 0
@@ -84,6 +91,7 @@ class TestVolumeBarAggregatorBasic:
 # ---------------------------------------------------------------------------
 # OHLCV correctness
 # ---------------------------------------------------------------------------
+
 
 class TestOHLCV:
     def test_ohlcv_values(self):
@@ -130,6 +138,7 @@ class TestOHLCV:
 # Min bar duration
 # ---------------------------------------------------------------------------
 
+
 class TestMinBarDuration:
     def test_min_duration_prevents_micro_bars(self):
         """Bar is NOT finalized if elapsed time < min_bar_duration_sec."""
@@ -150,7 +159,10 @@ class TestMinBarDuration:
 
         # Small tick at t=6s — triggers finalization (volume already met, now time met)
         bar = agg.process_tick(
-            time=base + timedelta(seconds=6), bid=1.10, ask=1.10, volume=1.0,
+            time=base + timedelta(seconds=6),
+            bid=1.10,
+            ask=1.10,
+            volume=1.0,
         )
         assert bar is not None
         assert bar.volume == pytest.approx(201.0)
@@ -160,15 +172,14 @@ class TestMinBarDuration:
 # Batch process_ticks
 # ---------------------------------------------------------------------------
 
+
 class TestBatchProcessing:
     def test_process_ticks_dataframe(self):
         """Batch processing produces correct bars from a DataFrame."""
         agg = VolumeBarAggregator(volume_threshold=50.0, min_bar_duration_sec=0.0)
         base = datetime(2025, 1, 1, 12, 0, 0, tzinfo=UTC)
 
-        ticks = _tick_df([
-            (base + timedelta(seconds=i), 1.10, 1.10, 10.0) for i in range(12)
-        ])
+        ticks = _tick_df([(base + timedelta(seconds=i), 1.10, 1.10, 10.0) for i in range(12)])
         bars = agg.process_ticks(ticks)
 
         # 12 ticks * 10 vol = 120 total -> should get 2 bars (50 + 50), leftover 20
@@ -187,6 +198,7 @@ class TestBatchProcessing:
 # ---------------------------------------------------------------------------
 # Callbacks
 # ---------------------------------------------------------------------------
+
 
 class TestCallbacks:
     def test_callback_fires_on_finalization(self):
@@ -228,6 +240,7 @@ class TestCallbacks:
 # Reset
 # ---------------------------------------------------------------------------
 
+
 class TestReset:
     def test_reset_clears_state(self):
         """Reset discards partial bar and resets counter."""
@@ -247,7 +260,10 @@ class TestReset:
 
         # After reset, need full threshold again
         result = agg.process_tick(
-            time=base + timedelta(seconds=2), bid=1.10, ask=1.10, volume=50.0,
+            time=base + timedelta(seconds=2),
+            bid=1.10,
+            ask=1.10,
+            volume=50.0,
         )
         assert result is None  # only 50, threshold is 100
 
@@ -255,6 +271,7 @@ class TestReset:
 # ---------------------------------------------------------------------------
 # Edge cases
 # ---------------------------------------------------------------------------
+
 
 class TestEdgeCases:
     def test_zero_volume_ticks(self):
@@ -268,7 +285,10 @@ class TestEdgeCases:
 
         # Now send volume
         bar = agg.process_tick(
-            time=base + timedelta(seconds=1), bid=1.10, ask=1.10, volume=10.0,
+            time=base + timedelta(seconds=1),
+            bid=1.10,
+            ask=1.10,
+            volume=10.0,
         )
         assert bar is not None
         assert bar.high == pytest.approx(1.12)  # zero-vol tick's price is tracked
@@ -315,7 +335,9 @@ class TestEdgeCases:
         for i in range(30):
             bar = agg.process_tick(
                 time=base + timedelta(seconds=i),
-                bid=1.10, ask=1.10, volume=10.0,
+                bid=1.10,
+                ask=1.10,
+                volume=10.0,
             )
             if bar is not None:
                 bars.append(bar)
@@ -335,6 +357,7 @@ class TestEdgeCases:
 # AdaptiveVolumeThreshold
 # ---------------------------------------------------------------------------
 
+
 class TestAdaptiveVolumeThreshold:
     def _make_bars(self, n: int, interval_sec: float) -> list[FinalizedBar]:
         """Create n bars spaced interval_sec apart."""
@@ -343,8 +366,13 @@ class TestAdaptiveVolumeThreshold:
             FinalizedBar(
                 timeframe="V1000",
                 time=base + timedelta(seconds=i * interval_sec),
-                open=1.10, high=1.10, low=1.10, close=1.10,
-                volume=1000.0, tick_count=10, vwap=1.10,
+                open=1.10,
+                high=1.10,
+                low=1.10,
+                close=1.10,
+                volume=1000.0,
+                tick_count=10,
+                vwap=1.10,
             )
             for i in range(n)
         ]
@@ -352,7 +380,8 @@ class TestAdaptiveVolumeThreshold:
     def test_initial_threshold(self):
         """Initial threshold is the midpoint of min/max."""
         avt = AdaptiveVolumeThreshold(
-            min_threshold=100.0, max_threshold=10000.0,
+            min_threshold=100.0,
+            max_threshold=10000.0,
         )
         assert avt.get_threshold() == pytest.approx(5050.0)
 
@@ -432,10 +461,12 @@ class TestAdaptiveVolumeThreshold:
 # Config integration
 # ---------------------------------------------------------------------------
 
+
 class TestVolumeBarConfig:
     def test_default_config(self):
         """VolumeBarConfig has sensible defaults."""
         from apexfx.config.schema import VolumeBarConfig
+
         cfg = VolumeBarConfig()
         assert cfg.enabled is False
         assert cfg.threshold == 1000.0
@@ -446,6 +477,7 @@ class TestVolumeBarConfig:
     def test_data_config_includes_volume_bars(self):
         """DataConfig has volume_bars field."""
         from apexfx.config.schema import DataConfig
+
         dc = DataConfig()
         assert hasattr(dc, "volume_bars")
         assert dc.volume_bars.enabled is False

@@ -208,7 +208,7 @@ class SyntheticDataGenerator:
 
         # Build full event list including clusters
         all_events: list[tuple[int, float]] = []
-        for idx, magnitude in zip(event_indices, event_magnitudes):
+        for idx, magnitude in zip(event_indices, event_magnitudes, strict=False):
             all_events.append((int(idx), float(magnitude)))
 
             # Cluster generation: same direction, decaying magnitude
@@ -308,8 +308,8 @@ class SyntheticDataGenerator:
         resist_dist = np.full(n, np.nan)
         for i in range(n):
             price = close[i]
-            below = [l for l in merged if l < price]
-            above = [l for l in merged if l > price]
+            below = [lvl for lvl in merged if lvl < price]
+            above = [lvl for lvl in merged if lvl > price]
             if below:
                 support_dist[i] = (price - max(below)) / price
             if above:

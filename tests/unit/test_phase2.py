@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 import torch
-
 
 # ── Sigmoid Gating + Meta-Confidence ──────────────────────────────
 
@@ -158,7 +156,7 @@ class TestSumTree:
         from apexfx.training.per import SumTree
 
         tree = SumTree(capacity=5)
-        for i in range(10):
+        for _i in range(10):
             tree.add(1.0)
         assert tree.n_entries == 5
         assert abs(tree.total - 5.0) < 1e-6
@@ -179,7 +177,9 @@ class TestSumTree:
             _, data_idx, _ = tree.get(v)
             if data_idx == 50:
                 high_count += 1
-        assert high_count > 500, f"High-priority item sampled {high_count}/1000 times (expected >500)"
+        assert high_count > 500, (
+            f"High-priority item sampled {high_count}/1000 times (expected >500)"
+        )
 
     def test_update_priority(self):
         from apexfx.training.per import SumTree
@@ -202,7 +202,7 @@ class TestGRNContextBroadcast:
 
         grn = GatedResidualNetwork(d_input=32, d_hidden=32, d_output=32, d_context=32)
         x = torch.randn(2, 10, 32)  # (batch, time, d)
-        ctx = torch.randn(2, 32)    # (batch, d) — static context
+        ctx = torch.randn(2, 32)  # (batch, d) — static context
         out = grn(x, ctx)
         assert out.shape == (2, 10, 32)
 

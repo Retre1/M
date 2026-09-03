@@ -28,9 +28,9 @@ from apexfx.live.signal_generator import MTFSignalGenerator, SignalGenerator
 from apexfx.live.state_manager import StateManager
 from apexfx.risk.risk_manager import MarketState, RiskManager
 from apexfx.training.model_registry import ModelRegistry
+from apexfx.utils import prometheus as prom
 from apexfx.utils.logging import get_logger
 from apexfx.utils.math_utils import atr
-from apexfx.utils import prometheus as prom
 
 logger = get_logger(__name__)
 
@@ -69,16 +69,16 @@ class LiveTradingLoop:
         self._mt5 = MT5Client()
         self._store = DataStore(config.base.paths.data_dir)
         self._tick_collector = TickCollector(
-            self._mt5, self._store, symbol,
+            self._mt5,
+            self._store,
+            symbol,
             poll_interval_ms=config.data.collection.poll_interval_ms,
         )
         self._bar_aggregator = BarAggregator(config.data.timeframes)
         self._feature_pipeline = FeaturePipeline()
 
         # Model path
-        model_file = model_path or str(
-            Path(config.base.paths.models_dir) / "best" / "final_model"
-        )
+        model_file = model_path or str(Path(config.base.paths.models_dir) / "best" / "final_model")
 
         # Risk & Execution
         self._risk_manager = RiskManager(config.risk)
@@ -146,6 +146,7 @@ class LiveTradingLoop:
         if ol_cfg.enabled:
             try:
                 from apexfx.training.online_learner import OnlineLearner
+
                 self._online_learner = OnlineLearner(
                     model_path=model_file,
                     config=config,
@@ -167,6 +168,7 @@ class LiveTradingLoop:
         if ol_cfg.enabled and ol_cfg.update_every_n_trades > 0:
             try:
                 from apexfx.live.online_learner import LiveOnlineLearner
+
                 self._live_learner = LiveOnlineLearner(
                     model=self._signal_gen._model,
                     config=ol_cfg,
@@ -197,6 +199,7 @@ class LiveTradingLoop:
         self._sentiment_extractor = None
         try:
             from apexfx.features.sentiment import SentimentExtractor
+
             for ext in self._feature_pipeline._extractors:
                 if isinstance(ext, SentimentExtractor):
                     self._sentiment_extractor = ext
@@ -210,6 +213,7 @@ class LiveTradingLoop:
         if intermarket_symbols:
             try:
                 from apexfx.data.intermarket import IntermarketDataProvider
+
                 self._intermarket_provider = IntermarketDataProvider(self._mt5)
                 self._intermarket_symbols = intermarket_symbols
                 logger.info(
@@ -244,6 +248,7 @@ class LiveTradingLoop:
                     import os
 
                     from apexfx.alerts.telegram_bot import TelegramAlerter
+
                     token = alert_cfg.telegram_bot_token or os.getenv("TELEGRAM_BOT_TOKEN", "")
                     chat_id = alert_cfg.telegram_chat_id or os.getenv("TELEGRAM_CHAT_ID", "")
                     if token and chat_id:
@@ -253,6 +258,7 @@ class LiveTradingLoop:
                     import os
 
                     from apexfx.alerts.webhook import WebhookAlerter
+
                     url = alert_cfg.webhook_url or os.getenv("ALERT_WEBHOOK_URL", "")
                     if url:
                         self._alert_manager.add_channel(
@@ -270,6 +276,7 @@ class LiveTradingLoop:
         if news_cfg.enabled and self._sentiment_extractor is not None:
             try:
                 from apexfx.data.realtime_news import RealtimeNewsStream
+
                 self._news_stream = RealtimeNewsStream(news_cfg)
             except Exception as e:
                 logger.warning("RealtimeNewsStream init failed", error=str(e))
@@ -343,7 +350,7 @@ class LiveTradingLoop:
 
     def _on_new_ticks(self, ticks: pd.DataFrame) -> None:
         """Process incoming ticks through bar aggregator."""
-        bars = self._bar_aggregator.process_ticks(ticks)
+        self._bar_aggregator.process_ticks(ticks)
         self._health.update_tick_time(datetime.now(UTC))
 
     def _on_bar_finalized(self, bar) -> None:
@@ -374,9 +381,7 @@ class LiveTradingLoop:
             return
 
         # Use lock-protected wrapper to prevent parallel bar processing
-        self._loop.call_soon_threadsafe(
-            self._loop.create_task, self._process_bar_locked(bar)
-        )
+        self._loop.call_soon_threadsafe(self._loop.create_task, self._process_bar_locked(bar))
 
     async def _process_bar_locked(self, bar) -> None:
         """Acquire processing lock before running the bar pipeline."""
@@ -450,7 +455,9 @@ class LiveTradingLoop:
                     )
                     if not intermarket_df.empty and "time" in intermarket_df.columns:
                         bars_df = bars_df.merge(
-                            intermarket_df, on="time", how="left",
+                            intermarket_df,
+                            on="time",
+                            how="left",
                         )
                         bars_df = bars_df.ffill()
                 except Exception as e:
@@ -609,12 +616,16 @@ class LiveTradingLoop:
                 if result.success and result.action_taken == "opened":
                     direction = 1 if signal.action > 0 else -1
                     self._state.open_position(
-                        self._symbol, direction,
-                        result.volume, result.fill_price or bar.close,
+                        self._symbol,
+                        direction,
+                        result.volume,
+                        result.fill_price or bar.close,
                     )
                 elif result.success and result.action_taken == "closed":
                     pnl = self._calculate_pnl(result.fill_price or bar.close)
-                    trade_return = pnl / self._state.state.equity if self._state.state.equity > 0 else 0.0
+                    trade_return = (
+                        pnl / self._state.state.equity if self._state.state.equity > 0 else 0.0
+                    )
                     self._state.close_position(result.fill_price or bar.close, pnl)
                     self._risk_manager.record_trade(pnl, trade_return=trade_return)
 
@@ -665,9 +676,7 @@ class LiveTradingLoop:
             # --- Update Prometheus metrics ---
             prom.bar_processing_seconds.observe(time.monotonic() - _bar_start)
             prom.consecutive_failures.set(self._consecutive_failures)
-            prom.kill_switch_active.set(
-                1.0 if self._risk_manager.kill_switch.is_active else 0.0
-            )
+            prom.kill_switch_active.set(1.0 if self._risk_manager.kill_switch.is_active else 0.0)
             state = self._state.state
             prom.equity.set(state.equity)
             prom.drawdown_pct.set(state.max_drawdown * 100)
@@ -737,7 +746,10 @@ class LiveTradingLoop:
                     volume=pos.volume,
                 )
                 self._state.open_position(
-                    self._symbol, direction, pos.volume, pos.price_open,
+                    self._symbol,
+                    direction,
+                    pos.volume,
+                    pos.price_open,
                 )
                 self._executor._current_position_direction = direction
                 self._executor._current_position_volume = pos.volume
@@ -761,7 +773,10 @@ class LiveTradingLoop:
                     # Close stale internal position and re-open with correct values
                     self._state.close_position(pos.price_open, 0.0)
                     self._state.open_position(
-                        self._symbol, mt5_direction, pos.volume, pos.price_open,
+                        self._symbol,
+                        mt5_direction,
+                        pos.volume,
+                        pos.price_open,
                     )
                     self._executor._current_position_direction = mt5_direction
                     self._executor._current_position_volume = pos.volume
@@ -769,31 +784,6 @@ class LiveTradingLoop:
 
         except Exception as e:
             logger.error("MT5 position sync failed", error=str(e))
-
-    def rollback_model(self) -> bool:
-        """Rollback to previous model version if available.
-
-        Returns True if rollback was successful, False if no previous model.
-        """
-        prev_path = getattr(self, "_previous_model_path", None)
-        if prev_path is None:
-            logger.warning("No previous model available for rollback")
-            return False
-
-        try:
-            self._signal_gen = SignalGenerator(prev_path, device="cpu")
-            self._current_model_path = prev_path
-            self._previous_model_path = None
-            self._model_version = getattr(self, "_model_version", 1) - 1
-            logger.info(
-                "Model rolled back successfully",
-                version=self._model_version,
-                path=prev_path,
-            )
-            return True
-        except Exception as e:
-            logger.error("Model rollback failed", error=str(e))
-            return False
 
     async def _force_close_if_needed(self, bar) -> None:
         """Force close open position if one exists."""
@@ -825,7 +815,8 @@ class LiveTradingLoop:
         state = self._state.state
         price_diff = exit_price - state.current_position_entry_price
         pnl = (
-            price_diff * state.current_position_volume
+            price_diff
+            * state.current_position_volume
             * self._symbol_config.contract_size
             * state.current_position_direction
         )
@@ -838,7 +829,8 @@ class LiveTradingLoop:
         if state.current_position_direction != 0:
             price_diff = current_price - state.current_position_entry_price
             unrealized = (
-                price_diff * state.current_position_volume
+                price_diff
+                * state.current_position_volume
                 * self._symbol_config.contract_size
                 * state.current_position_direction
             )
@@ -869,7 +861,7 @@ class LiveTradingLoop:
                     if self._risk_alert_monitor and reconnect_attempts == 0:
                         await self._risk_alert_monitor.on_mt5_disconnect()
 
-                    delay = min(2 ** reconnect_attempts, max_reconnect_delay)
+                    delay = min(2**reconnect_attempts, max_reconnect_delay)
                     reconnect_attempts += 1
                     logger.info(
                         "MT5 reconnect attempt",
@@ -940,8 +932,7 @@ class LiveTradingLoop:
                             (
                                 f"{e.name} ({e.currency}) at {e.time_utc:%H:%M UTC}"
                                 for e in events
-                                if e.impact == "high"
-                                and e.time_utc > datetime.now(UTC)
+                                if e.impact == "high" and e.time_utc > datetime.now(UTC)
                             ),
                             "none",
                         ),
@@ -963,7 +954,8 @@ class LiveTradingLoop:
                         "Online learning: retraining triggered",
                         new_bars=self._new_bars_count,
                     )
-                    # Build recent data from bars buffer — run in thread pool to avoid blocking event loop
+                    # Build recent data from the bars buffer; runs in a thread
+                    # pool so the event loop is not blocked
                     if len(self._bars_buffer) > 24:
                         recent_data = pd.DataFrame(self._bars_buffer)
                         result = await self._loop.run_in_executor(
@@ -972,11 +964,8 @@ class LiveTradingLoop:
                         if result.promoted:
                             # Reload model in signal generator — track version for rollback
                             try:
-                                prev_signal_gen = self._signal_gen
                                 prev_model_path = getattr(self, "_current_model_path", None)
-                                self._signal_gen = SignalGenerator(
-                                    result.model_path, device="cpu"
-                                )
+                                self._signal_gen = SignalGenerator(result.model_path, device="cpu")
                                 self._previous_model_path = prev_model_path
                                 self._current_model_path = result.model_path
                                 self._model_version = getattr(self, "_model_version", 0) + 1
@@ -1048,7 +1037,8 @@ class LiveTradingLoop:
                 # Collect headlines with timeout (batch for efficiency)
                 try:
                     headline = await asyncio.wait_for(
-                        queue.get(), timeout=batch_interval,
+                        queue.get(),
+                        timeout=batch_interval,
                     )
                     batch.append(headline.to_dict())
 
@@ -1066,9 +1056,7 @@ class LiveTradingLoop:
                 # Flush batch to sentiment extractor
                 if batch:
                     self._sentiment_extractor.update_headlines(batch)
-                    urgent_count = sum(
-                        1 for h in batch if h.get("is_urgent", False)
-                    )
+                    urgent_count = sum(1 for h in batch if h.get("is_urgent", False))
                     logger.debug(
                         "Real-time news batch processed",
                         n_headlines=len(batch),
@@ -1088,6 +1076,7 @@ class LiveTradingLoop:
         while self._running:
             try:
                 from apexfx.data.news_fetcher import NewsFetcher
+
                 fetcher = NewsFetcher()
                 headlines = fetcher.fetch_latest(max_items=20)
                 if headlines:
@@ -1109,7 +1098,7 @@ class LiveTradingLoop:
         logger.info("Cleaning up...")
         try:
             await asyncio.wait_for(self._do_cleanup(), timeout=30.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error("Cleanup timed out after 30s — force exiting")
 
     async def _do_cleanup(self) -> None:

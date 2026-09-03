@@ -140,7 +140,9 @@ class StructureExtractor(BaseFeatureExtractor):
             if recent_highs:
                 last_sh_price = recent_highs[-1][1]
                 # Bullish BOS: current high breaks above the last swing high
-                if current_high > last_sh_price and (i == min_start or high[i - 1] <= last_sh_price):
+                if current_high > last_sh_price and (
+                    i == min_start or high[i - 1] <= last_sh_price
+                ):
                     bull_break = 1.0
                     broken_levels.append((last_sh_price, i, "bull"))
 
@@ -160,7 +162,10 @@ class StructureExtractor(BaseFeatureExtractor):
 
             # 6. Level confluence: how many S/R levels within confluence_atr_mult * ATR
             confluence = self._compute_confluence(
-                current_price, recent_highs, recent_lows, current_atr,
+                current_price,
+                recent_highs,
+                recent_lows,
+                current_atr,
             )
             result.iat[i, 5] = confluence
 
@@ -171,15 +176,15 @@ class StructureExtractor(BaseFeatureExtractor):
 
             # 8. Retest signal
             retest = self._detect_retest(
-                current_price, current_atr, i, broken_levels,
+                current_price,
+                current_atr,
+                i,
+                broken_levels,
             )
             result.iat[i, 7] = retest
 
             # Cleanup old broken levels
-            broken_levels = [
-                (p, idx, d) for p, idx, d in broken_levels
-                if i - idx < 100
-            ]
+            broken_levels = [(p, idx, d) for p, idx, d in broken_levels if i - idx < 100]
 
         return result
 
@@ -189,8 +194,8 @@ class StructureExtractor(BaseFeatureExtractor):
         n = len(high)
         is_swing = np.zeros(n, dtype=bool)
         for i in range(period, n - period):
-            left = high[i - period:i]
-            right = high[i + 1:i + period + 1]
+            left = high[i - period : i]
+            right = high[i + 1 : i + period + 1]
             if high[i] > left.max() and high[i] > right.max():
                 is_swing[i] = True
         return is_swing
@@ -201,8 +206,8 @@ class StructureExtractor(BaseFeatureExtractor):
         n = len(low)
         is_swing = np.zeros(n, dtype=bool)
         for i in range(period, n - period):
-            left = low[i - period:i]
-            right = low[i + 1:i + period + 1]
+            left = low[i - period : i]
+            right = low[i + 1 : i + period + 1]
             if low[i] < left.min() and low[i] < right.min():
                 is_swing[i] = True
         return is_swing
@@ -222,9 +227,9 @@ class StructureExtractor(BaseFeatureExtractor):
             return 0.0
 
         hh = recent_highs[-1][1] > recent_highs[-2][1]  # higher high
-        hl = recent_lows[-1][1] > recent_lows[-2][1]     # higher low
-        lh = recent_highs[-1][1] < recent_highs[-2][1]   # lower high
-        ll = recent_lows[-1][1] < recent_lows[-2][1]     # lower low
+        hl = recent_lows[-1][1] > recent_lows[-2][1]  # higher low
+        lh = recent_highs[-1][1] < recent_highs[-2][1]  # lower high
+        ll = recent_lows[-1][1] < recent_lows[-2][1]  # lower low
 
         if hh and hl:
             return 1.0  # bullish structure
@@ -282,7 +287,10 @@ class StructureExtractor(BaseFeatureExtractor):
 
     @staticmethod
     def _compute_atr(
-        high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int,
+        high: np.ndarray,
+        low: np.ndarray,
+        close: np.ndarray,
+        period: int,
     ) -> np.ndarray:
         n = len(high)
         tr = np.zeros(n)

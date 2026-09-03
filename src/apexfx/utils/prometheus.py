@@ -24,8 +24,7 @@ Metrics exposed:
 from __future__ import annotations
 
 import threading
-import time
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 
 from apexfx.utils.logging import get_logger
@@ -47,7 +46,7 @@ class _Gauge:
     def set(self, value: float, **label_values: str) -> None:
         with self._lock:
             if label_values:
-                key = tuple(label_values.get(l, "") for l in self.labels)
+                key = tuple(label_values.get(name, "") for name in self.labels)
                 self._labeled_values[key] = value
             else:
                 self._value = value
@@ -62,7 +61,7 @@ class _Gauge:
             if self._labeled_values:
                 for label_vals, val in self._labeled_values.items():
                     label_str = ",".join(
-                        f'{l}="{v}"' for l, v in zip(self.labels, label_vals)
+                        f'{name}="{v}"' for name, v in zip(self.labels, label_vals, strict=False)
                     )
                     lines.append(f"{self.name}{{{label_str}}} {val}")
             else:
@@ -113,7 +112,9 @@ drawdown_pct = _Gauge("apexfx_drawdown_pct", "Current drawdown from peak (%)")
 trade_count = _Gauge("apexfx_trade_count", "Total number of closed trades")
 position_direction = _Gauge("apexfx_position_direction", "Current position direction (+1/-1/0)")
 position_volume = _Gauge("apexfx_position_volume", "Current position volume (lots)")
-consecutive_failures = _Gauge("apexfx_consecutive_failures", "Circuit breaker consecutive failure count")
+consecutive_failures = _Gauge(
+    "apexfx_consecutive_failures", "Circuit breaker consecutive failure count"
+)
 kill_switch_active = _Gauge("apexfx_kill_switch_active", "Kill switch status (0=off, 1=active)")
 health_status = _Gauge("apexfx_health_status", "Overall system health (0=unhealthy, 1=healthy)")
 tick_age_seconds = _Gauge("apexfx_tick_age_seconds", "Age of last received tick in seconds")
@@ -137,17 +138,28 @@ fill_slippage_pips = _Histogram(
 )
 
 _ALL_METRICS: list[_Gauge | _Histogram] = [
-    equity, pnl_total, drawdown_pct, trade_count,
-    position_direction, position_volume,
-    consecutive_failures, kill_switch_active,
-    health_status, tick_age_seconds, memory_usage_mb, model_version,
-    bar_processing_seconds, inference_seconds, fill_slippage_pips,
+    equity,
+    pnl_total,
+    drawdown_pct,
+    trade_count,
+    position_direction,
+    position_volume,
+    consecutive_failures,
+    kill_switch_active,
+    health_status,
+    tick_age_seconds,
+    memory_usage_mb,
+    model_version,
+    bar_processing_seconds,
+    inference_seconds,
+    fill_slippage_pips,
 ]
 
 
 # ---------------------------------------------------------------------------
 # HTTP server for /metrics endpoint
 # ---------------------------------------------------------------------------
+
 
 class _MetricsHandler(BaseHTTPRequestHandler):
     """Minimal HTTP handler that serves Prometheus metrics."""

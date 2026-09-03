@@ -17,7 +17,10 @@ risk:
   var_confidence: 0.99
 
   position_sizing:
-    max_position_pct: 0.05        # 5% max (was 10%)
+    risk_per_trade_pct: 0.005     # 0.5% per trade — half the default
+    max_leverage: 5.0             # half the default cap
+    atr_stop_mult: 2.0
+    max_position_pct: 0.05        # notional cap, fallback path only (no ATR)
     kelly_fraction: 0.25          # Quarter-Kelly (was half)
     min_trades_for_kelly: 50      # Need 50 trades (was 30)
 

@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import pytest
-
-from apexfx.data.news_fetcher import NewsFetcher, _MAX_RSS_BYTES
+from apexfx.data.news_fetcher import _MAX_RSS_BYTES, NewsFetcher
 
 
 class TestIsAllowedFeed:

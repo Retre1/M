@@ -169,7 +169,6 @@ class TemporalFusionTransformer(nn.Module):
             TFTOutput with encoded state, temporal features, attention weights,
             and variable importance scores.
         """
-        batch = x_past.size(0)
 
         # --- Static context ---
         static_context = None

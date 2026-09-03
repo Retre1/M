@@ -11,10 +11,10 @@ import torch
 
 from apexfx.features.importance_tracker import FeatureImportanceTracker
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def feature_names() -> list[str]:
@@ -29,6 +29,7 @@ def tracker(feature_names: list[str]) -> FeatureImportanceTracker:
 # ---------------------------------------------------------------------------
 # Construction & validation
 # ---------------------------------------------------------------------------
+
 
 class TestConstruction:
     def test_init_stores_names(self, feature_names: list[str]) -> None:
@@ -57,9 +58,11 @@ class TestConstruction:
 # EMA convergence
 # ---------------------------------------------------------------------------
 
+
 class TestEMAConvergence:
     def test_first_update_initializes_directly(
-        self, tracker: FeatureImportanceTracker,
+        self,
+        tracker: FeatureImportanceTracker,
     ) -> None:
         # One-hot: feature 0 has all the weight
         t = torch.zeros(10)
@@ -70,7 +73,8 @@ class TestEMAConvergence:
         assert d["feat_1"] == pytest.approx(0.0)
 
     def test_ema_converges_toward_constant_signal(
-        self, feature_names: list[str],
+        self,
+        feature_names: list[str],
     ) -> None:
         """After many updates with the same input, EMA should converge to it."""
         tracker = FeatureImportanceTracker(feature_names=feature_names, ema_alpha=0.1)
@@ -89,7 +93,8 @@ class TestEMAConvergence:
         assert d["feat_0"] == pytest.approx(0.0, abs=0.01)
 
     def test_ema_alpha_1_equals_latest_value(
-        self, feature_names: list[str],
+        self,
+        feature_names: list[str],
     ) -> None:
         """With alpha=1.0, EMA should always equal the latest input."""
         tracker = FeatureImportanceTracker(feature_names=feature_names, ema_alpha=1.0)
@@ -109,6 +114,7 @@ class TestEMAConvergence:
 # ---------------------------------------------------------------------------
 # Top-K / Bottom-K ordering
 # ---------------------------------------------------------------------------
+
 
 class TestTopKBottomK:
     def test_top_k_ordering(self, tracker: FeatureImportanceTracker) -> None:
@@ -132,7 +138,8 @@ class TestTopKBottomK:
         assert names == ["feat_0", "feat_1", "feat_2"]
 
     def test_top_k_larger_than_n_features(
-        self, tracker: FeatureImportanceTracker,
+        self,
+        tracker: FeatureImportanceTracker,
     ) -> None:
         t = torch.ones(10)
         tracker.update(t)
@@ -143,6 +150,7 @@ class TestTopKBottomK:
 # ---------------------------------------------------------------------------
 # Tensor shape handling
 # ---------------------------------------------------------------------------
+
 
 class TestTensorShapes:
     def test_1d_tensor(self, tracker: FeatureImportanceTracker) -> None:
@@ -171,7 +179,8 @@ class TestTensorShapes:
             assert d[name] == pytest.approx(expected[i].item(), abs=1e-5)
 
     def test_wrong_feature_count_raises(
-        self, tracker: FeatureImportanceTracker,
+        self,
+        tracker: FeatureImportanceTracker,
     ) -> None:
         with pytest.raises(ValueError, match="features"):
             tracker.update(torch.rand(5))  # Expected 10
@@ -196,6 +205,7 @@ class TestTensorShapes:
 # Save / Load roundtrip
 # ---------------------------------------------------------------------------
 
+
 class TestSaveLoad:
     def test_roundtrip(
         self,
@@ -203,7 +213,7 @@ class TestSaveLoad:
         tmp_path: Path,
     ) -> None:
         # Feed some data
-        for i in range(5):
+        for _i in range(5):
             tracker.update(torch.rand(10))
 
         save_path = tmp_path / "importance.json"
@@ -226,7 +236,9 @@ class TestSaveLoad:
         # History should match
         assert loaded.get_history() == tracker.get_history()
 
-    def test_save_creates_parent_dirs(self, tracker: FeatureImportanceTracker, tmp_path: Path) -> None:
+    def test_save_creates_parent_dirs(
+        self, tracker: FeatureImportanceTracker, tmp_path: Path
+    ) -> None:
         tracker.update(torch.rand(10))
         save_path = tmp_path / "nested" / "dir" / "state.json"
         tracker.save(save_path)
@@ -258,9 +270,11 @@ class TestSaveLoad:
 # History deque max size
 # ---------------------------------------------------------------------------
 
+
 class TestHistory:
     def test_history_grows_with_updates(
-        self, tracker: FeatureImportanceTracker,
+        self,
+        tracker: FeatureImportanceTracker,
     ) -> None:
         for _ in range(5):
             tracker.update(torch.rand(10))
@@ -279,7 +293,8 @@ class TestHistory:
         assert tracker.update_count == 10
 
     def test_history_snapshots_are_independent(
-        self, tracker: FeatureImportanceTracker,
+        self,
+        tracker: FeatureImportanceTracker,
     ) -> None:
         """Each history entry should be a snapshot, not a reference."""
         tracker.update(torch.ones(10))
@@ -294,6 +309,7 @@ class TestHistory:
 # ---------------------------------------------------------------------------
 # Thread safety
 # ---------------------------------------------------------------------------
+
 
 class TestThreadSafety:
     def test_concurrent_updates(self, feature_names: list[str]) -> None:
@@ -374,6 +390,7 @@ class TestThreadSafety:
 # ---------------------------------------------------------------------------
 # Config integration
 # ---------------------------------------------------------------------------
+
 
 class TestConfigIntegration:
     def test_importance_tracking_config_defaults(self) -> None:

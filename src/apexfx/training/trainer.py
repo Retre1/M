@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import multiprocessing as mp
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
@@ -25,9 +26,7 @@ from apexfx.config.schema import AppConfig, RLAlgorithm
 from apexfx.data.mtf_synthetic import resample_real_data
 from apexfx.env.forex_env import ForexTradingEnv
 from apexfx.env.mtf_forex_env import MTFForexTradingEnv
-from apexfx.env.reward import (
-    TradingReward,
-)
+from apexfx.env.reward import TradingReward
 from apexfx.env.wrappers import MonitorWrapper, NormalizeReward, TradeFilterWrapper
 from apexfx.features.pipeline import FeaturePipeline
 from apexfx.features.selector import FeatureSelector
@@ -59,6 +58,45 @@ from apexfx.utils.metrics import compute_all_metrics
 
 logger = get_logger(__name__)
 
+# Fraction of history withheld from training and used only for the
+# post-training backtest. Before this existed, the curriculum trained on every
+# bar and the backtest then evaluated "the last 30%" of the same bars, which is
+# an in-sample result labelled out-of-sample.
+HOLDOUT_FRACTION = 0.3
+# Bars dropped between the training data and the holdout. Features use rolling
+# windows up to 252 bars, and FeatureSelector labels a bar by the *next* bar's
+# direction; without a gap the last training rows carry holdout information.
+HOLDOUT_PURGE_BARS = 300
+
+if TYPE_CHECKING:
+    from apexfx.models.config import WorldModelHybridConfig
+
+
+def build_world_model_config(wm_cfg) -> WorldModelHybridConfig:
+    """Translate the app-level world-model settings into the model's own config.
+
+    ``WorldModelCallback`` takes ``(d_features, config)``. The call site used to
+    pass the training knobs as keyword arguments, which the v2 signature does
+    not accept — and because ``world_model.enabled`` defaults to True, building
+    the callback list raised TypeError on every run, so the world model and
+    every dynamics backend behind it were unreachable. The two halves came from
+    different branches; nothing caught it because no test built the callback
+    list. That is what this function exists to make testable.
+    """
+    from apexfx.models.config import BackendType, WorldModelHybridConfig
+
+    return WorldModelHybridConfig(
+        backend=BackendType(wm_cfg.backend),
+        d_latent=wm_cfg.d_latent,
+        d_hidden=wm_cfg.d_hidden,
+        n_ensemble=wm_cfg.n_ensemble,
+        update_freq=wm_cfg.update_freq,
+        batch_size=wm_cfg.batch_size,
+        lr=wm_cfg.lr,
+        curiosity_weight=wm_cfg.curiosity_weight,
+        imagination_horizon=wm_cfg.imagination_horizon,
+    )
+
 
 class Trainer:
     """
@@ -75,6 +113,10 @@ class Trainer:
     def __init__(self, config: AppConfig, real_data: pd.DataFrame | None = None) -> None:
         self._config = config
         self._real_data = real_data
+        # Training never sees the holdout. The feature selector is fitted inside
+        # training, so this is also what keeps its forward-return labels off the
+        # evaluation slice.
+        self._train_data, self._holdout_start = self._split_holdout(real_data)
         self._feature_pipeline = FeaturePipeline()
         self._feature_selector = FeatureSelector(top_n=15)
         self._device = self._resolve_device()
@@ -92,8 +134,13 @@ class Trainer:
 
         # Determine number of parallel environments
         n_cpus = mp.cpu_count() or 4
-        self._n_envs = perf_cfg.n_envs if perf_cfg.n_envs > 0 else get_optimal_n_envs(
-            n_cpus, torch.cuda.device_count() if torch.cuda.is_available() else 0,
+        self._n_envs = (
+            perf_cfg.n_envs
+            if perf_cfg.n_envs > 0
+            else get_optimal_n_envs(
+                n_cpus,
+                torch.cuda.device_count() if torch.cuda.is_available() else 0,
+            )
         )
         logger.info(
             "Parallel environments configured",
@@ -110,6 +157,44 @@ class Trainer:
                 lambda_ewc=ewc_cfg.lambda_ewc,
                 gamma_ewc=ewc_cfg.gamma_ewc,
             )
+
+    @staticmethod
+    def _split_holdout(
+        data: pd.DataFrame | None,
+    ) -> tuple[pd.DataFrame | None, int | None]:
+        """Split off the evaluation holdout before any training touches the data.
+
+        Returns ``(train_data, holdout_start_idx)`` where the index refers to
+        the *original* frame, so the backtest can compute features over the full
+        series — rolling features are causal, and recomputing them from the
+        holdout's first bar would only add a warm-up artefact — and then slice.
+
+        The gap between the two is ``HOLDOUT_PURGE_BARS``: rolling windows and
+        the selector's next-bar label both reach forward from the last training
+        row, so adjacent slices are not actually disjoint in information.
+        """
+        if data is None or len(data) == 0:
+            return data, None
+
+        holdout_start = int(len(data) * (1.0 - HOLDOUT_FRACTION))
+        train_end = holdout_start - HOLDOUT_PURGE_BARS
+
+        if train_end <= 0:
+            logger.warning(
+                "Not enough bars to hold out an evaluation slice — training on "
+                "everything and skipping the post-training backtest",
+                n_bars=len(data),
+                needed=int(HOLDOUT_PURGE_BARS / (1.0 - HOLDOUT_FRACTION)) + 1,
+            )
+            return data, None
+
+        logger.info(
+            "Holdout reserved",
+            train_bars=train_end,
+            purged_bars=HOLDOUT_PURGE_BARS,
+            holdout_bars=len(data) - holdout_start,
+        )
+        return data.iloc[:train_end].reset_index(drop=True), holdout_start
 
     def _resolve_device(self) -> str:
         dev = self._config.base.device.value
@@ -134,7 +219,9 @@ class Trainer:
         # 1. Restore EWC
         if state.ewc_state is not None and self._ewc_reg is not None:
             self._ewc_reg.load_state_dict(state.ewc_state)
-            logger.info("EWC state restored", n_consolidations=state.ewc_state.get("n_consolidations", 0))
+            logger.info(
+                "EWC state restored", n_consolidations=state.ewc_state.get("n_consolidations", 0)
+            )
 
         # 2. Restore feature selector
         if state.feature_selector_state is not None:
@@ -234,7 +321,7 @@ class Trainer:
 
         curriculum = CurriculumManager(
             config=self._config.training,
-            real_data=self._real_data,
+            real_data=self._train_data,
             seed=self._config.base.seed,
             mtf_enabled=self._mtf_enabled,
         )
@@ -301,11 +388,28 @@ class Trainer:
             )
             logger.info("Stage complete", stage=stage_data.stage_idx)
 
+        # If all stages were skipped (resume after full training),
+        # load the model from the checkpoint for backtest/evaluation.
+        if self._model is None and resume_state is not None:
+            model_path = resume_state.model_path
+            if model_path and Path(model_path).exists():
+                rl_cfg = self._config.model.rl
+                algo_map = {"TQC": TQC, "SAC": SAC, "PPO": PPO}
+                algo_cls = algo_map.get(rl_cfg.algorithm.value, TQC)
+                logger.info("Loading trained model for backtest", path=str(model_path))
+                self._model = algo_cls.load(
+                    str(model_path).replace(".zip", ""),
+                    device=self._device,
+                )
+
         # Save final model
         best_path = Path(self._config.base.paths.models_dir) / "best"
         best_path.mkdir(parents=True, exist_ok=True)
-        self._model.save(str(best_path / "final_model"))
-        logger.info("Training complete")
+        if self._model is not None:
+            self._model.save(str(best_path / "final_model"))
+            logger.info("Training complete — model saved")
+        else:
+            logger.warning("No model available to save")
 
         # Auto-backtest after training
         self._run_backtest(best_path)
@@ -360,9 +464,7 @@ class Trainer:
 
         data = {
             "n_folds": len(results.folds),
-            "aggregate_metrics": {
-                k: float(v) for k, v in results.aggregate_metrics.items()
-            },
+            "aggregate_metrics": {k: float(v) for k, v in results.aggregate_metrics.items()},
             "folds": [
                 {
                     "fold_idx": f.fold_idx,
@@ -379,45 +481,21 @@ class Trainer:
         logger.info("Walk-forward results saved", path=str(results_path))
 
     def _merge_intermarket(self, bars: pd.DataFrame, timeframe: str = "H1") -> pd.DataFrame:
-        """Merge intermarket data (DXY, Gold, US10Y, SPX) into bars DataFrame.
+        """Attach the intermarket basket before features are computed.
 
-        This enables IntermarketCorrExtractor to compute real correlation
-        features instead of returning NaN.
+        Delegates to ``merge_intermarket_columns`` so the v2 trainer runs the
+        identical path — it previously had no merge at all, which left its
+        correlation features degenerate and FSD dispersion at zero.
         """
-        intermarket_symbols = self._config.symbols.intermarket
-        if not intermarket_symbols:
-            return bars
+        from apexfx.data.intermarket import merge_intermarket_columns
 
-        try:
-            from apexfx.data.intermarket import IntermarketDataProvider
-            provider = IntermarketDataProvider()  # No MT5 in training — uses fallback
-
-            # Try loading cached intermarket data from Parquet
-            from pathlib import Path
-            data_dir = Path(self._config.base.paths.data_dir) / "processed"
-
-            merged = bars.copy()
-            for instrument in intermarket_symbols:
-                parquet_path = data_dir / instrument / timeframe / "data.parquet"
-                if parquet_path.exists():
-                    idf = pd.read_parquet(parquet_path)
-                    if "close" in idf.columns and "time" in idf.columns:
-                        idf = idf[["time", "close"]].rename(
-                            columns={"close": f"{instrument}_close"}
-                        )
-                        merged = merged.merge(idf, on="time", how="left")
-                        logger.debug(
-                            "Intermarket data merged for training",
-                            instrument=instrument,
-                            n_matched=merged[f"{instrument}_close"].notna().sum(),
-                        )
-
-            merged = merged.ffill()
-            return merged
-
-        except Exception as e:
-            logger.debug("Intermarket merge skipped in training", error=str(e))
-            return bars
+        merged, _attached = merge_intermarket_columns(
+            bars,
+            list(self._config.symbols.intermarket),
+            self._config.base.paths.data_dir,
+            timeframe,
+        )
+        return merged
 
     def _train_single_tf_stage(self, stage_data, *, override_timesteps: int | None = None) -> None:
         """Train a single-timeframe stage (original behavior)."""
@@ -468,7 +546,9 @@ class Trainer:
             progress_bar=True,
         )
 
-    def _train_mtf_stage(self, stage_data: MTFStageData, *, override_timesteps: int | None = None) -> None:
+    def _train_mtf_stage(
+        self, stage_data: MTFStageData, *, override_timesteps: int | None = None
+    ) -> None:
         """Train a multi-timeframe stage."""
         timesteps = override_timesteps or stage_data.stage.total_timesteps
 
@@ -486,7 +566,25 @@ class Trainer:
         h1_features = self._feature_pipeline.compute(h1_data)
         logger.info("H1 features ready", n_bars=len(h1_features))
 
-        m5_features = self._feature_pipeline.compute(m5_data)
+        # Subsample M5 if too large (134K+ bars with O(n·window) Hurst/Spectral
+        # extractors would take hours). Compute full features on subsample,
+        # then reindex back to full resolution with forward-fill.
+        _M5_MAX_BARS = 30_000
+        if len(m5_data) > _M5_MAX_BARS:
+            step = max(1, len(m5_data) // _M5_MAX_BARS)
+            m5_sampled = m5_data.iloc[::step]
+            logger.info(
+                "Subsampling M5 for feature computation",
+                original=len(m5_data),
+                sampled=len(m5_sampled),
+                step=step,
+            )
+            m5_features = self._feature_pipeline.compute(m5_sampled)
+            # Reindex to full M5 resolution and forward-fill
+            m5_features = m5_features.reindex(m5_data.index, method="ffill")
+            m5_features = m5_features.bfill()  # fill leading NaN
+        else:
+            m5_features = self._feature_pipeline.compute(m5_data)
         logger.info("M5 features ready", n_bars=len(m5_features))
 
         # Feature selection: fit on H1 (primary timeframe), apply to all
@@ -542,6 +640,7 @@ class Trainer:
 
         def make_env_fn(rank: int):
             """Factory that captures rank for seed diversification."""
+
             def _init():
                 env = ForexTradingEnv(
                     data=data,
@@ -574,7 +673,8 @@ class Trainer:
                 # Action smoothing: EMA for smoother trading
                 if tc_cfg.enabled and tc_cfg.action_smoothing_alpha < 1.0:
                     env = ActionSmoothingWrapper(
-                        env, alpha=tc_cfg.action_smoothing_alpha,
+                        env,
+                        alpha=tc_cfg.action_smoothing_alpha,
                     )
 
                 # Adversarial noise: robustness against distribution shift
@@ -591,11 +691,13 @@ class Trainer:
                 # Data augmentation: time warp, magnitude warp, window slice, mixup
                 if aug_cfg.enabled:
                     from apexfx.training.augmentation import AugmentedObsWrapper
+
                     env = AugmentedObsWrapper(env, aug_cfg)
 
                 env = MonitorWrapper(env)
                 env = NormalizeReward(env)
                 return env
+
             return _init
 
         env_fns = [make_env_fn(i) for i in range(n_envs)]
@@ -710,9 +812,7 @@ class Trainer:
         # Cosine LR schedule: decays from initial LR to near-zero
         lr = rl_cfg.learning_rate
         if rl_cfg.use_cosine_lr:
-            total_steps = sum(
-                s.total_timesteps for s in self._config.training.curriculum.stages
-            )
+            total_steps = sum(s.total_timesteps for s in self._config.training.curriculum.stages)
             lr = self._cosine_lr_schedule(rl_cfg.learning_rate, total_steps)
 
         policy_kwargs = {
@@ -811,9 +911,11 @@ class Trainer:
     @staticmethod
     def _cosine_lr_schedule(initial_lr: float, total_timesteps: int):
         """Cosine annealing LR schedule (returns callable for SB3)."""
+
         def schedule(progress_remaining: float) -> float:
             # progress_remaining goes from 1.0 → 0.0
             return initial_lr * (0.5 * (1.0 + np.cos(np.pi * (1.0 - progress_remaining))))
+
         return schedule
 
     def _build_mtf_env(
@@ -860,7 +962,8 @@ class Trainer:
 
                 if tc_cfg.enabled and tc_cfg.action_smoothing_alpha < 1.0:
                     env = ActionSmoothingWrapper(
-                        env, alpha=tc_cfg.action_smoothing_alpha,
+                        env,
+                        alpha=tc_cfg.action_smoothing_alpha,
                     )
 
                 if adv_cfg.enabled:
@@ -876,11 +979,13 @@ class Trainer:
                 # Data augmentation: time warp, magnitude warp, window slice, mixup
                 if aug_cfg.enabled:
                     from apexfx.training.augmentation import AugmentedObsWrapper
+
                     env = AugmentedObsWrapper(env, aug_cfg)
 
                 env = MonitorWrapper(env)
                 env = NormalizeReward(env)
                 return env
+
             return _init
 
         env_fns = [make_env_fn(i) for i in range(n_envs)]
@@ -905,9 +1010,7 @@ class Trainer:
 
         lr = rl_cfg.learning_rate
         if rl_cfg.use_cosine_lr:
-            total_steps = sum(
-                s.total_timesteps for s in self._config.training.curriculum.stages
-            )
+            total_steps = sum(s.total_timesteps for s in self._config.training.curriculum.stages)
             lr = self._cosine_lr_schedule(rl_cfg.learning_rate, total_steps)
 
         policy_kwargs = {
@@ -1098,11 +1201,7 @@ class Trainer:
             callbacks.append(
                 WorldModelCallback(
                     d_features=d_features,
-                    update_freq=wm_cfg.update_freq,
-                    batch_size=wm_cfg.batch_size,
-                    lr=wm_cfg.lr,
-                    curiosity_weight=wm_cfg.curiosity_weight,
-                    imagination_horizon=wm_cfg.imagination_horizon,
+                    config=build_world_model_config(wm_cfg),
                 )
             )
             logger.info(
@@ -1139,6 +1238,13 @@ class Trainer:
             logger.warning("No model to backtest — skipping")
             return
 
+        if self._holdout_start is None:
+            logger.warning(
+                "No holdout was reserved — skipping the post-training backtest. "
+                "Evaluating on bars the agent trained on would not be a test.",
+            )
+            return
+
         if self._real_data is None or self._real_data.empty:
             logger.warning("No real data available for backtest — skipping")
             return
@@ -1158,10 +1264,13 @@ class Trainer:
             else:
                 n_features = min(self._feature_pipeline.n_features, 30)
 
-            # Split: last 30% for out-of-sample test
-            split_idx = int(len(features) * 0.7)
+            # The holdout reserved in __init__ — bars training never saw.
+            split_idx = self._holdout_start
             test_data = features.iloc[split_idx:].reset_index(drop=True)
-            logger.info("Test data", n_bars=len(test_data), split="last 30%")
+            logger.info(
+                "Test data", n_bars=len(test_data), holdout_start=split_idx,
+                purged_bars=HOLDOUT_PURGE_BARS,
+            )
 
             if len(test_data) < 50:
                 logger.warning("Too few test bars for reliable backtest", n_bars=len(test_data))
@@ -1209,7 +1318,10 @@ class Trainer:
             step_count = 0
 
             while not done:
-                action, _ = self._model.predict(obs, deterministic=True)
+                # Use stochastic policy — deterministic=True produces near-zero
+                # mean actions that fall in the dead zone, resulting in 0 trades.
+                # The trained policy relies on entropy noise for trade generation.
+                action, _ = self._model.predict(obs, deterministic=False)
                 obs, reward, terminated, truncated, info = eval_env.step(action)
                 done = terminated or truncated
 
@@ -1224,7 +1336,13 @@ class Trainer:
                 if abs(position) > 0 and abs(prev_position) == 0:
                     trades.append({"step": step_count, "type": "open", "position": float(position)})
                 elif abs(position) == 0 and abs(prev_position) > 0:
-                    trades.append({"step": step_count, "type": "close", "pnl": float(current_value - prev_value)})
+                    trades.append(
+                        {
+                            "step": step_count,
+                            "type": "close",
+                            "pnl": float(current_value - prev_value),
+                        }
+                    )
 
                 equity.append(current_value)
                 prev_value = current_value
@@ -1241,7 +1359,7 @@ class Trainer:
             # Max drawdown from equity curve
             eq_arr = np.array(equity)
             peak = np.maximum.accumulate(eq_arr)
-            dd_pct = ((peak - eq_arr) / peak * 100)
+            dd_pct = (peak - eq_arr) / peak * 100
             max_dd_pct = float(np.max(dd_pct)) if len(dd_pct) > 0 else 0.0
 
             n_trades = len([t for t in trades if t["type"] == "open"])
@@ -1288,6 +1406,7 @@ class Trainer:
         except Exception as e:
             logger.error("Backtest failed (training succeeded though)", error=str(e))
             import traceback
+
             traceback.print_exc()
 
     @property

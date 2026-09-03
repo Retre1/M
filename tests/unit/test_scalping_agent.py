@@ -10,7 +10,6 @@ import torch
 from apexfx.features.scalping import ScalpingExtractor
 from apexfx.models.agents.scalping_agent import ScalpingAgent
 
-
 # =====================================================================
 # ScalpingAgent tests
 # =====================================================================
@@ -244,7 +243,7 @@ def _make_m1_bars(
     """Create sample M1 OHLCV bars for testing."""
     rng = np.random.RandomState(42)
     dates = pd.date_range(
-        "2024-01-15 {:02d}:00".format(start_hour),
+        f"2024-01-15 {start_hour:02d}:00",
         periods=n,
         freq="1min",
         tz="UTC",

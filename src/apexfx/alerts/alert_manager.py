@@ -130,7 +130,7 @@ class AlertManager:
             return_exceptions=True,
         )
 
-        for ch, result in zip(self._channels, results):
+        for ch, result in zip(self._channels, results, strict=False):
             if isinstance(result, Exception):
                 logger.error(
                     "Alert channel failed",

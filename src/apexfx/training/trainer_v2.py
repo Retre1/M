@@ -24,6 +24,9 @@ Usage::
 
 from __future__ import annotations
 
+import contextlib
+import math
+from collections import deque
 from pathlib import Path
 from typing import Any
 
@@ -35,8 +38,34 @@ from stable_baselines3.common.callbacks import BaseCallback, CallbackList
 from apexfx.training.config import CurriculumV2Config, StageConfig
 from apexfx.training.curriculum_v2 import CurriculumV2, StageDataV2
 from apexfx.utils.logging import get_logger
+from apexfx.utils.metrics import (
+    expectancy,
+    max_drawdown,
+    profit_factor,
+    sharpe_ratio,
+    sortino_ratio,
+    win_rate,
+)
 
 logger = get_logger(__name__)
+
+# H1 bars: 24 per day across ~252 trading days. Annualising a bar-level return
+# series with 252 (as runs 1-6 did) understates Sharpe by sqrt(24).
+BARS_PER_YEAR_H1 = 24 * 252
+
+
+def _finite(value: float) -> float:
+    """Map inf/NaN onto finite sentinels so comparisons and logging behave.
+
+    ``profit_factor`` and ``sortino_ratio`` return ``inf`` when there are no
+    losing observations — true, but an ``inf`` flowing into early-stop deltas
+    or a TensorBoard scalar is worse than useless.
+    """
+    if math.isnan(value):
+        return 0.0
+    if math.isinf(value):
+        return 999.0 if value > 0 else -999.0
+    return float(value)
 
 
 # ── Picklable env thunk factory (module-level for SubprocVecEnv) ──────
@@ -54,6 +83,7 @@ def _make_env_thunk(
     """
     def _thunk() -> Any:
         from stable_baselines3.common.monitor import Monitor
+
         from apexfx.env.forex_env import ForexTradingEnv
 
         env = ForexTradingEnv(
@@ -62,11 +92,9 @@ def _make_env_thunk(
             reward_fn=reward_fn_factory(),
             max_drawdown_pct=0.15,
         )
-        try:
+        # Older gym API has no seed kwarg
+        with contextlib.suppress(TypeError):
             env.reset(seed=seed)
-        except TypeError:
-            # Older gym API without seed kwarg
-            pass
         return Monitor(env)
 
     return _thunk
@@ -91,13 +119,24 @@ class CurriculumV2Callback(BaseCallback):
         stage_idx: int,
         check_freq: int = 10000,
         verbose: int = 0,
+        periods_per_year: int = BARS_PER_YEAR_H1,
+        pool_episodes: int = 100,
     ) -> None:
         super().__init__(verbose)
         self._curriculum = curriculum
         self._stage_idx = stage_idx
         self._check_freq = check_freq
+        self._periods_per_year = periods_per_year
+        self._pool_episodes = pool_episodes
         self._episode_rewards: list[float] = []
         self._episode_lengths: list[int] = []
+        # Realised performance of recent episodes, pooled for the financial
+        # metrics. Bar returns drive Sharpe/Sortino/drawdown; trade returns
+        # drive profit factor and win rate, matching the OOS backtest's
+        # definition so training and evaluation numbers are comparable.
+        self._bar_returns: deque[np.ndarray] = deque(maxlen=pool_episodes)
+        self._trade_returns: deque[np.ndarray] = deque(maxlen=pool_episodes)
+        self._episode_trade_counts: deque[int] = deque(maxlen=pool_episodes)
         self._should_stop = False
 
     def _on_step(self) -> bool:
@@ -107,6 +146,13 @@ class CurriculumV2Callback(BaseCallback):
             if "episode" in info:
                 self._episode_rewards.append(info["episode"]["r"])
                 self._episode_lengths.append(info["episode"]["l"])
+            fin = info.get("episode_financials")
+            if fin is not None:
+                self._bar_returns.append(np.asarray(fin["returns"], dtype=np.float64))
+                self._trade_returns.append(
+                    np.asarray(fin["trade_returns"], dtype=np.float64),
+                )
+                self._episode_trade_counts.append(int(fin["n_trades"]))
 
         # Periodic check
         if self.num_timesteps % self._check_freq == 0 and self._episode_rewards:
@@ -142,8 +188,26 @@ class CurriculumV2Callback(BaseCallback):
         return True
 
     def get_metrics(self) -> dict[str, float]:
-        """Collect current training metrics (public — used by trainer too)."""
-        recent = self._episode_rewards[-100:]
+        """Collect current training metrics (public — used by trainer too).
+
+        ``sharpe`` and ``profit_factor`` are computed from realised PnL, not
+        from the reward series. Runs 1-6 used the reward series for both, which
+        made every number they reported meaningless:
+
+        * ``profit_factor`` summed positive against negative *episode rewards*.
+          Every run had a negative ``ep_rew_mean``, so the positive set was
+          always empty and PF was identically 0.0 no matter how the agent
+          traded. That zero then fed the AND-logic early stop and cut stages at
+          18-27% of their budget.
+        * ``sharpe`` was ``mean/std`` over those same rewards — which is how a
+          "Sharpe" of -700000 appears. It also moved whenever the reward
+          weights were retuned between runs, so the -147 -> -58 -> -52
+          progression compared quantities on different scales.
+
+        The reward-series figures are still emitted, under names that say what
+        they are, so old logs remain interpretable.
+        """
+        recent = self._episode_rewards[-self._pool_episodes:]
         rewards = np.array(recent) if recent else np.array([0.0])
 
         metrics: dict[str, float] = {
@@ -152,19 +216,45 @@ class CurriculumV2Callback(BaseCallback):
             "n_episodes": len(self._episode_rewards),
         }
 
-        # Sharpe ratio (annualized, assuming ~252 trading days)
+        # The quantity runs 1-6 called "sharpe" — kept for continuity with
+        # those logs, named for what it actually is.
         if len(rewards) > 1 and np.std(rewards) > 0:
-            metrics["sharpe"] = float(np.mean(rewards) / np.std(rewards) * np.sqrt(252))
+            metrics["reward_sharpe"] = float(
+                np.mean(rewards) / np.std(rewards) * np.sqrt(252),
+            )
         else:
-            metrics["sharpe"] = 0.0
+            metrics["reward_sharpe"] = 0.0
 
-        # Profit factor
-        gains = rewards[rewards > 0].sum()
-        losses = abs(rewards[rewards < 0].sum())
-        metrics["profit_factor"] = float(gains / max(losses, 1e-8))
-
+        metrics.update(self._financial_metrics())
         metrics["gating_entropy"] = self._read_entropy()
         return metrics
+
+    def _financial_metrics(self) -> dict[str, float]:
+        """Sharpe, profit factor and friends over realised returns."""
+        bar_returns = (
+            np.concatenate(list(self._bar_returns)) if self._bar_returns else np.zeros(0)
+        )
+        trade_returns = (
+            np.concatenate(list(self._trade_returns)) if self._trade_returns else np.zeros(0)
+        )
+
+        n_trades = int(sum(self._episode_trade_counts))
+        trades_per_episode = (
+            n_trades / len(self._episode_trade_counts) if self._episode_trade_counts else 0.0
+        )
+
+        return {
+            "sharpe": sharpe_ratio(bar_returns, periods=self._periods_per_year),
+            "sortino": _finite(sortino_ratio(bar_returns, periods=self._periods_per_year)),
+            "max_drawdown": max_drawdown(bar_returns),
+            # Profit factor over closed trades: the same definition the OOS
+            # backtest reports, so the two can be compared directly.
+            "profit_factor": _finite(profit_factor(trade_returns)),
+            "win_rate": win_rate(trade_returns),
+            "expectancy": expectancy(trade_returns),
+            "n_trades": float(n_trades),
+            "trades_per_episode": float(trades_per_episode),
+        }
 
     def _read_entropy(self) -> float:
         """Read live entropy from the model.
@@ -239,12 +329,11 @@ class WorldModelV2Callback(BaseCallback):
 
     def _on_step(self) -> bool:
         # Log imagination metrics if world model callback is present
-        if self.num_timesteps % (self._imagination_freq * 100) == 0:
-            if self.logger:
-                self.logger.record(
-                    "world_model/imagination_freq",
-                    self._imagination_freq,
-                )
+        if self.num_timesteps % (self._imagination_freq * 100) == 0 and self.logger:
+            self.logger.record(
+                "world_model/imagination_freq",
+                self._imagination_freq,
+            )
         return True
 
 
@@ -279,16 +368,41 @@ class TrainerV2:
         self._real_data = real_data
         self._multi_symbol_data = multi_symbol_data or {}
 
+        # The holdout is reserved here, before the curriculum ever sees the
+        # data. Trainer got this and TrainerV2 did not, and TrainerV2 is what
+        # scripts/train_v2.py runs — so without it the next run would train on
+        # every bar and any "out-of-sample" evaluation would repeat exactly the
+        # in-sample result that invalidated runs 1-6.
+        from apexfx.training.trainer import Trainer as _Trainer
+
+        self._train_data, self._holdout_start = _Trainer._split_holdout(real_data)
+        self._multi_symbol_data = {
+            symbol: _Trainer._split_holdout(frame)[0]
+            for symbol, frame in self._multi_symbol_data.items()
+        }
+
         ckpt_dir = checkpoint_dir or Path("models/v2_checkpoints")
         self._curriculum = CurriculumV2(
             config=self._curriculum_config,
-            real_data=real_data,
+            real_data=self._train_data,
             checkpoint_dir=ckpt_dir,
         )
 
         self._model: Any = None
         self._device = self._resolve_device()
         self._active_curriculum_cb: CurriculumV2Callback | None = None
+
+    @property
+    def holdout_data(self) -> pd.DataFrame | None:
+        """Bars withheld from training, for an evaluation that means something.
+
+        None when the history was too short to reserve one — in which case
+        there is no honest out-of-sample slice to evaluate on, and saying so
+        beats scoring the agent on bars it trained on.
+        """
+        if self._real_data is None or self._holdout_start is None:
+            return None
+        return self._real_data.iloc[self._holdout_start:].reset_index(drop=True)
         self._feature_pipeline: Any = None  # lazy init
         self._feature_required_columns = (
             "hurst_exponent", "trend_strength", "close_zscore",
@@ -381,7 +495,7 @@ class TrainerV2:
 
             # Stage completion
             stage_metrics = self._collect_stage_metrics()
-            sm = self._curriculum.on_stage_complete(stage_idx, stage_metrics)
+            self._curriculum.on_stage_complete(stage_idx, stage_metrics)
 
             # EWC consolidation between stages
             if self._curriculum_config.ewc_enabled and self._model is not None:
@@ -410,11 +524,35 @@ class TrainerV2:
             from apexfx.training.trainer import FeaturePipeline
             self._feature_pipeline = FeaturePipeline()
 
+        # The basket has to be attached before features are computed:
+        # IntermarketCorrExtractor reads {inst}_close, and FSDExtractor
+        # measures dispersion across instruments, which on a single series is
+        # identically zero. Trainer merged and TrainerV2 did not, so in the v2
+        # path both feature groups were silently inert.
+        enriched = self._merge_intermarket(df)
+
         logger.info(
             "Computing features for stage env",
-            n_bars=len(df), missing=missing,
+            n_bars=len(enriched), missing=missing,
         )
-        return self._feature_pipeline.compute(df)
+        return self._feature_pipeline.compute(enriched)
+
+    def _merge_intermarket(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Attach the intermarket basket, when one is configured."""
+        if self._app_config is None:
+            logger.debug("No app config — intermarket merge skipped")
+            return df
+
+        from apexfx.data.intermarket import merge_intermarket_columns
+
+        merged, attached = merge_intermarket_columns(
+            df,
+            list(self._app_config.symbols.intermarket),
+            self._app_config.base.paths.data_dir,
+        )
+        if attached:
+            logger.info("Intermarket basket attached", instruments=attached)
+        return merged
 
     def _build_stage_env(self, stage_data: StageDataV2) -> Any:
         """Build a (possibly parallel) vec-env for a stage.
@@ -581,8 +719,8 @@ class TrainerV2:
         # World model callback
         if self._curriculum_config.world_model_enabled:
             try:
-                from apexfx.models.world_model import WorldModelCallback
                 from apexfx.models.config import WorldModelHybridConfig
+                from apexfx.models.world_model import WorldModelCallback
 
                 wm_config = WorldModelHybridConfig()
                 callbacks.append(WorldModelCallback(config=wm_config))
@@ -610,13 +748,25 @@ class TrainerV2:
             logger.warning("Could not load model for warm-start", error=str(e))
 
     def _consolidate_ewc(self, stage_idx: int) -> None:
-        """EWC Fisher consolidation after stage completion."""
-        try:
-            from apexfx.training.ewc import EWCRegularizer
-            # Simple consolidation: snapshot current params as important
-            logger.info("EWC consolidation", stage=stage_idx)
-        except ImportError:
-            pass
+        """Not implemented — no Fisher information is consolidated between stages.
+
+        This has always been a stub: it imported ``EWCRegularizer`` without
+        instantiating it and logged "EWC consolidation" at INFO, so the run logs
+        of runs 1-6 read as though EWC were active. It was not. Tuning
+        ``ewc_lambda`` between those runs (5000 -> 2000) therefore changed
+        nothing, and Run 5's conclusion that "EWC + adversarial ossified the
+        policy" can only be attributed to the adversarial stage.
+
+        Kept as an explicit warning rather than deleted so the curriculum's call
+        site stays visible until real consolidation lands.
+        """
+        if self._curriculum_config.ewc_enabled:
+            logger.warning(
+                "EWC consolidation requested but not implemented — no Fisher "
+                "information is retained between stages; ewc_lambda has no effect",
+                stage=stage_idx,
+                ewc_lambda=self._curriculum_config.ewc_lambda,
+            )
 
     def _collect_stage_metrics(self) -> dict[str, float]:
         """Collect final metrics for a completed stage.

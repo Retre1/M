@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 from dataclasses import dataclass
 from datetime import datetime
@@ -123,6 +124,7 @@ class MT5Client:
         """Initialize and connect to MT5 terminal."""
         try:
             import MetaTrader5 as mt5
+
             self._mt5 = mt5
         except ImportError:
             logger.warning("MetaTrader5 package not available. Using mock mode.")
@@ -159,9 +161,7 @@ class MT5Client:
         if not self._connected or self._mt5 is None:
             raise ConnectionError("MT5 not connected. Call connect() first.")
 
-    def get_ticks(
-        self, symbol: str, from_dt: datetime, count: int = 1000
-    ) -> pd.DataFrame:
+    def get_ticks(self, symbol: str, from_dt: datetime, count: int = 1000) -> pd.DataFrame:
         """Get tick data from MT5."""
         self._ensure_connected()
         ticks = self._mt5.copy_ticks_from(symbol, from_dt, count, self._mt5.COPY_TICKS_ALL)
@@ -174,9 +174,7 @@ class MT5Client:
         # Validate tick data: reject zero/negative prices and NaN
         pre_len = len(df)
         if "bid" in df.columns and "ask" in df.columns:
-            df = df[
-                (df["bid"] > 0) & (df["ask"] > 0) & (df["ask"] >= df["bid"])
-            ].copy()
+            df = df[(df["bid"] > 0) & (df["ask"] > 0) & (df["ask"] >= df["bid"])].copy()
             df = df.dropna(subset=["bid", "ask"])
         if len(df) < pre_len:
             logger.warning(
@@ -187,9 +185,7 @@ class MT5Client:
 
         return df
 
-    def get_ticks_range(
-        self, symbol: str, from_dt: datetime, to_dt: datetime
-    ) -> pd.DataFrame:
+    def get_ticks_range(self, symbol: str, from_dt: datetime, to_dt: datetime) -> pd.DataFrame:
         """Get tick data in a time range."""
         self._ensure_connected()
         ticks = self._mt5.copy_ticks_range(symbol, from_dt, to_dt, self._mt5.COPY_TICKS_ALL)
@@ -292,9 +288,7 @@ class MT5Client:
         if result is None:
             error = self._mt5.last_error()
             logger.error("Order send failed", error=error)
-            return TradeResult(
-                retcode=-1, deal=0, order=0, volume=0, price=0, comment=str(error)
-            )
+            return TradeResult(retcode=-1, deal=0, order=0, volume=0, price=0, comment=str(error))
 
         logger.info(
             "Order sent",
@@ -316,10 +310,7 @@ class MT5Client:
     def get_positions(self, symbol: str | None = None) -> list[Position]:
         """Get open positions."""
         self._ensure_connected()
-        if symbol:
-            positions = self._mt5.positions_get(symbol=symbol)
-        else:
-            positions = self._mt5.positions_get()
+        positions = self._mt5.positions_get(symbol=symbol) if symbol else self._mt5.positions_get()
 
         if positions is None:
             return []
@@ -377,17 +368,17 @@ class MT5Client:
             logger.warning("Order book fetch failed", symbol=symbol, error=str(e))
             return {"bids": [], "asks": []}
         finally:
-            try:
+            with contextlib.suppress(Exception):
                 self._mt5.market_book_release(symbol)
-            except Exception:
-                pass
 
     def close_position(self, ticket: int) -> TradeResult:
         """Close a position by ticket."""
         self._ensure_connected()
         positions = self._mt5.positions_get(ticket=ticket)
         if not positions:
-            return TradeResult(retcode=-1, deal=0, order=0, volume=0, price=0, comment="Position not found")
+            return TradeResult(
+                retcode=-1, deal=0, order=0, volume=0, price=0, comment="Position not found"
+            )
 
         pos = positions[0]
         close_type = OrderType.SELL if pos.type == 0 else OrderType.BUY

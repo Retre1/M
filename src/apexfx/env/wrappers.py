@@ -181,12 +181,9 @@ class TradeFilterWrapper(gym.Wrapper):
                 self._filter_stats["force_closed"] += 1
             elif not decision.allowed:
                 # Block new entry: keep current position unchanged
-                # If we have a position, maintain it; if flat, stay flat
-                if abs(current_position) > 0.01:
-                    # Maintain current direction/size — just pass current position through
-                    action_val = current_position
-                else:
-                    action_val = 0.0
+                # If we have a position, maintain it; if flat, stay flat.
+                # Maintaining means passing the current position straight through.
+                action_val = current_position if abs(current_position) > 0.01 else 0.0
                 self._filter_stats["blocked"] += 1
             elif decision.scale < 1.0:
                 action_val = action_val * decision.scale

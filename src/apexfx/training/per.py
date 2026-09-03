@@ -128,7 +128,7 @@ class PERCallback(BaseCallback):
         self._tree = SumTree(capacity)
         # Initialize all existing entries with max priority
         max_priority = 1.0
-        for i in range(min(buf.size(), capacity)):
+        for _i in range(min(buf.size(), capacity)):
             self._tree.add(max_priority)
         self._initialized = True
         logger.info("PER SumTree initialized", capacity=capacity, initial_entries=buf.size())

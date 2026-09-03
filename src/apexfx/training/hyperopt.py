@@ -159,14 +159,17 @@ class SACHyperoptManager:
         trials_summary = []
         for t in study.trials:
             if t.state == optuna.trial.TrialState.COMPLETE:
-                trials_summary.append({
-                    "number": t.number,
-                    "sharpe": t.value,
-                    "params": t.params,
-                    "user_attrs": t.user_attrs,
-                    "duration_s": (t.datetime_complete - t.datetime_start).total_seconds()
-                    if t.datetime_complete else None,
-                })
+                trials_summary.append(
+                    {
+                        "number": t.number,
+                        "sharpe": t.value,
+                        "params": t.params,
+                        "user_attrs": t.user_attrs,
+                        "duration_s": (t.datetime_complete - t.datetime_start).total_seconds()
+                        if t.datetime_complete
+                        else None,
+                    }
+                )
 
         return {
             "best_params": best.params,
@@ -233,7 +236,11 @@ class SACHyperoptManager:
 
             logger.info(
                 "Trial #%d  sharpe=%.4f  return=%.2f%%  dd=%.2f%%  trades=%d",
-                trial.number, sharpe, total_return, max_dd, n_trades,
+                trial.number,
+                sharpe,
+                total_return,
+                max_dd,
+                n_trades,
             )
 
             # Penalize if no trades (model is doing nothing)
@@ -262,7 +269,9 @@ class SACHyperoptManager:
             "buffer_size": trial.suggest_categorical("buffer_size", [100_000, 500_000, 1_000_000]),
             "train_freq": trial.suggest_categorical("train_freq", [1, 4, 8]),
             "gradient_steps": trial.suggest_categorical("gradient_steps", [1, 4, 8]),
-            "learning_starts": trial.suggest_categorical("learning_starts", [1_000, 5_000, 10_000, 20_000]),
+            "learning_starts": trial.suggest_categorical(
+                "learning_starts", [1_000, 5_000, 10_000, 20_000]
+            ),
             "ent_coef": trial.suggest_categorical("ent_coef", ["auto", 0.01, 0.05, 0.1, 0.2]),
             # ── TFT architecture ──
             "d_model": trial.suggest_categorical("d_model", [32, 64]),

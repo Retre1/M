@@ -21,6 +21,7 @@ logger = get_logger(__name__)
 @dataclass
 class ExecutionResult:
     """Result of an execution attempt."""
+
     success: bool
     action_taken: str  # "opened", "closed", "adjusted", "blocked", "none"
     fill_price: float | None = None
@@ -133,10 +134,7 @@ class Executor:
             )
 
         # Determine target direction
-        if abs(action) < 0.05:
-            target_direction = 0
-        else:
-            target_direction = 1 if action > 0 else -1
+        target_direction = 0 if abs(action) < 0.05 else 1 if action > 0 else -1
 
         # --- Close position if direction changes ---
         if current_direction != 0 and target_direction != current_direction:
@@ -169,9 +167,7 @@ class Executor:
             message="No position change needed",
         )
 
-    async def _open_position(
-        self, direction: int, volume: float
-    ) -> ExecutionResult:
+    async def _open_position(self, direction: int, volume: float) -> ExecutionResult:
         """Open a new position with retry logic."""
         # Sync with MT5 before opening to avoid stale state
         self.sync_with_mt5()
@@ -234,7 +230,7 @@ class Executor:
             # Retry with backoff
             if attempt < self._config.retry.max_retries - 1:
                 backoff_ms = min(
-                    self._config.retry.backoff_base_ms * (2 ** attempt),
+                    self._config.retry.backoff_base_ms * (2**attempt),
                     self._config.retry.backoff_max_ms,
                 )
                 logger.info(
@@ -265,7 +261,9 @@ class Executor:
             fraction: Fraction to close (0.5 = close half).
         """
         if self._current_position_volume <= 0:
-            return ExecutionResult(success=True, action_taken="none", message="No position to reduce")
+            return ExecutionResult(
+                success=True, action_taken="none", message="No position to reduce"
+            )
         close_volume = self._current_position_volume * fraction
         close_volume = max(close_volume, self._symbol_config.lot_step)
         return await self._partial_close(close_volume)
@@ -276,7 +274,9 @@ class Executor:
         self.sync_with_mt5()
 
         if self._current_position_ticket is None:
-            return ExecutionResult(success=True, action_taken="none", message="No position to close")
+            return ExecutionResult(
+                success=True, action_taken="none", message="No position to close"
+            )
 
         result = self._mt5.close_position(self._current_position_ticket)
 

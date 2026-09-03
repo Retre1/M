@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pandas as pd
 
 from apexfx.features import BaseFeatureExtractor
 from apexfx.features.clustering import ClusteringExtractor
 from apexfx.features.dim_reducer import BaseDimReducer
+from apexfx.features.fsd import FSDExtractor
 from apexfx.features.fundamental import FundamentalExtractor
 from apexfx.features.hurst import HurstExtractor
 from apexfx.features.intermarket_corr import IntermarketCorrExtractor
@@ -70,6 +73,9 @@ class FeaturePipeline:
             HurstExtractor(window=252),
             SpectralExtractor(fft_window=256),
             IntermarketCorrExtractor(),
+            # Cross-sectional dispersion over the intermarket basket. Emits
+            # zeros and warns when no basket is merged — see features/fsd.py.
+            FSDExtractor(),
             RegimeExtractor(),
             ClusteringExtractor(window=200),
             FundamentalExtractor(),
@@ -85,6 +91,34 @@ class FeaturePipeline:
             logger.debug("SentimentExtractor not available (transformers not installed)")
 
         return extractors
+
+    @staticmethod
+    def _lightweight_extractors() -> list[BaseFeatureExtractor]:
+        """Fast extractors for high-frequency data (M5, M1).
+
+        Skips HurstExtractor (O(n·window) R/S loop) and
+        SpectralExtractor (O(n·window) FFT+wavelet loop) which
+        are prohibitively slow on 100K+ bars.
+        """
+        return [
+            VolumeProfileExtractor(window=100),
+            OrderFlowExtractor(),
+            IntermarketCorrExtractor(),
+            RegimeExtractor(),
+            ClusteringExtractor(window=200),
+            FundamentalExtractor(),
+            StructureExtractor(),
+            OrderBookExtractor(),
+        ]
+
+    @classmethod
+    def lightweight(cls, **kwargs: Any) -> FeaturePipeline:
+        """Create a pipeline without slow O(n²) extractors.
+
+        Use for M5/M1 timeframes with 100K+ bars where
+        HurstExtractor and SpectralExtractor would take hours.
+        """
+        return cls(extractors=cls._lightweight_extractors(), **kwargs)
 
     @property
     def feature_names(self) -> list[str]:
@@ -118,10 +152,13 @@ class FeaturePipeline:
         """Return True if *col* should bypass dim-reduction."""
         if col in _DIM_REDUCE_EXCLUDE:
             return True
-        for prefix in _DIM_REDUCE_EXCLUDE_PREFIXES:
-            if col.startswith(prefix):
-                return True
-        return False
+        return any(col.startswith(prefix) for prefix in _DIM_REDUCE_EXCLUDE_PREFIXES)
+
+    # Standard OHLCV(T) columns that constitute raw bar data.
+    _BAR_COLUMNS = frozenset([
+        "open", "high", "low", "close", "volume", "tick_volume",
+        "spread", "real_volume", "time", "datetime",
+    ])
 
     def compute(
         self,
@@ -132,6 +169,22 @@ class FeaturePipeline:
         Run all extractors and concatenate results.
         Returns a DataFrame with the original bar columns plus all feature columns.
         """
+        # Identify true bar columns (OHLCV + metadata).  If bars already
+        # contains feature columns from a previous compute() call we must
+        # strip them so that the ``feature_cols`` calculation below correctly
+        # detects the *newly* computed features.
+        input_bar_cols = set(bars.columns)
+        known_bar_cols = {c for c in bars.columns if c.lower() in self._BAR_COLUMNS}
+        if known_bar_cols and len(input_bar_cols) > len(known_bar_cols) + 5:
+            # bars likely has pre-computed feature columns — strip them
+            logger.debug(
+                "Stripping pre-existing feature columns from input",
+                n_input=len(input_bar_cols),
+                n_bar=len(known_bar_cols),
+            )
+            bars = bars[[c for c in bars.columns if c.lower() in self._BAR_COLUMNS]]
+            input_bar_cols = set(bars.columns)
+
         feature_dfs: list[pd.DataFrame] = []
 
         for extractor in self._extractors:
@@ -160,7 +213,7 @@ class FeaturePipeline:
         result = result.loc[:, ~result.columns.duplicated(keep="last")]
 
         # Forward-fill NaN at the beginning (from rolling windows)
-        feature_cols = [c for c in result.columns if c not in bars.columns]
+        feature_cols = [c for c in result.columns if c not in input_bar_cols]
         result[feature_cols] = result[feature_cols].ffill()
 
         # Normalize features (excluding bar columns and regime labels)
@@ -190,7 +243,7 @@ class FeaturePipeline:
         logger.info(
             "Feature pipeline complete",
             n_bars=len(result),
-            n_features=len([c for c in result.columns if c not in bars.columns]),
+            n_features=len(feature_cols),
         )
 
         return result

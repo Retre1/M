@@ -10,13 +10,11 @@ Covers:
 
 from __future__ import annotations
 
-import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import numpy as np
 import pandas as pd
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Dynamic Correlations
@@ -382,7 +380,7 @@ class TestCOTFetcher:
     def test_cot_record_fields(self):
         from apexfx.data.cot_fetcher import COTRecord
         record = COTRecord(
-            report_date=datetime(2025, 1, 7, tzinfo=timezone.utc),
+            report_date=datetime(2025, 1, 7, tzinfo=UTC),
             currency="EUR",
             speculative_long=150000,
             speculative_short=100000,

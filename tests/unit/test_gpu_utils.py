@@ -6,19 +6,17 @@ not CUDA availability. GPU-specific paths are tested via mocking.
 
 from __future__ import annotations
 
-import pytest
 import torch.nn as nn
 
 from apexfx.utils.gpu import (
+    MixedPrecisionWrapper,
     get_device_map,
     get_optimal_batch_size,
     get_optimal_buffer_size,
     get_optimal_n_envs,
-    try_compile_model,
-    MixedPrecisionWrapper,
     pin_memory_dataloader_kwargs,
+    try_compile_model,
 )
-
 
 # ── get_device_map ──────────────────────────────────────────────────
 

@@ -11,9 +11,14 @@ Stage progression:
 
 from __future__ import annotations
 
-from typing import Literal
+from pathlib import Path
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+
+from apexfx.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class AdaptiveLRConfig(BaseModel, frozen=True):
@@ -38,14 +43,25 @@ class AdaptiveLRConfig(BaseModel, frozen=True):
 class MultiMetricEarlyStopConfig(BaseModel, frozen=True):
     """Early stopping based on multiple metrics.
 
-    Monitors ep_rew_mean, Sharpe, profit_factor, gating_entropy.
-    Stops if ALL metrics fail to improve for `patience` evaluations.
+    Monitors ep_rew_mean, Sharpe and profit_factor. Stops only if ALL of them
+    fail to improve for `patience` evaluations.
+
+    ``min_delta_profit_factor`` was set to -1.0 for Run 4, when profit_factor
+    was computed from episode rewards and so was identically 0.0. A metric that
+    never improves stalls immediately and, under the all-must-stall rule, stops
+    holding training open — which is how runs 2 and 3 were cut at 18-27% of
+    their stage budgets. A *negative* delta is the opposite failure: the
+    comparison ``val > best + delta`` then passes almost always, the counter
+    never stalls, and early stopping can never fire at all.
+
+    Now that profit_factor is computed from realised trade returns it carries
+    information again, so the threshold is a small positive number.
     """
     enabled: bool = True
     patience: int = 60
     min_delta_reward: float = 0.01
     min_delta_sharpe: float = 0.05
-    min_delta_profit_factor: float = -1.0
+    min_delta_profit_factor: float = 0.01
     check_freq: int = 10000
 
 
@@ -242,3 +258,187 @@ class CurriculumV2Config(BaseModel, frozen=True):
     @property
     def n_stages(self) -> int:
         return len(self.stages)
+
+
+# ---------------------------------------------------------------------------
+# YAML loading
+#
+# Run 6 was killed and restarted after it emerged that TrainerV2 built
+# CurriculumV2Config() straight from the hardcoded defaults above and never
+# read configs/training.yaml. Every knob tuned between runs 1-5 therefore may
+# or may not have been in force, and the run logs cannot settle it.
+#
+# The YAML predates the v2 stage model and uses a different vocabulary: it says
+# `data_source: real` and nests noise under `augmentation`, while StageConfig
+# speaks in real_ratio / sbbts_ratio / enable_*. Only the overlapping keys can
+# be mapped; the rest of each stage is inherited from the built-in stage of the
+# same name.
+#
+# Anything the YAML sets that cannot be mapped is logged at WARNING rather than
+# dropped in silence — a setting that looks applied but is not is the exact
+# failure this loader exists to prevent.
+# ---------------------------------------------------------------------------
+
+# YAML stage key -> StageConfig field. Keys absent here are reported as ignored.
+_STAGE_KEY_MAP: dict[str, str] = {
+    "name": "name",
+    "description": "description",
+    "total_timesteps": "total_timesteps",
+    "filter_quantile": "filter_quantile",
+    "warm_start": "warm_start",
+    "lr_override": "lr_override",
+    "real_ratio": "real_ratio",
+    "sbbts_ratio": "sbbts_ratio",
+    "enable_dml_jumps": "enable_dml_jumps",
+    "enable_fsd": "enable_fsd",
+    "enable_adversarial": "enable_adversarial",
+    "reward_clip": "reward_clip",
+}
+
+# YAML `<section>.<key>` -> CurriculumV2Config field.
+_TOP_LEVEL_KEY_MAP: dict[str, str] = {
+    "ewc.enabled": "ewc_enabled",
+    "ewc.lambda_ewc": "ewc_lambda",
+    "ewc.gamma_ewc": "ewc_gamma",
+    "ewc.fisher_n_samples": "ewc_fisher_samples",
+    "world_model.enabled": "world_model_enabled",
+}
+
+
+def _stage_from_yaml(
+    raw: dict[str, Any],
+    defaults_by_name: dict[str, StageConfig],
+    ignored: list[str],
+) -> StageConfig:
+    """Build one StageConfig from a YAML stage entry."""
+    name = raw.get("name")
+    if not name:
+        raise ValueError("curriculum.stages[] entry is missing a 'name'")
+
+    # Start from the built-in stage of the same name so v2-only fields
+    # (real_ratio, sbbts_ratio, enable_*) keep meaningful values.
+    base = defaults_by_name.get(name, StageConfig(name=name))
+    updates: dict[str, Any] = {}
+
+    for key, value in raw.items():
+        if key == "augmentation":
+            if not isinstance(value, dict):
+                ignored.append(f"curriculum.stages[{name}].augmentation")
+                continue
+            for aug_key, aug_value in value.items():
+                if aug_key == "noise_std":
+                    updates["noise_std"] = aug_value
+                else:
+                    # price_shift_std and friends have no StageConfig field.
+                    ignored.append(f"curriculum.stages[{name}].augmentation.{aug_key}")
+            continue
+
+        field = _STAGE_KEY_MAP.get(key)
+        if field is None:
+            # `data_source` is the YAML's older way of saying real_ratio=1.0;
+            # it carries no extra information, so report it like any other
+            # unmapped key rather than guessing.
+            ignored.append(f"curriculum.stages[{name}].{key}")
+            continue
+        updates[field] = value
+
+    return base.model_copy(update=updates)
+
+
+def load_curriculum_v2_config(
+    config_dir: str | Path = "configs",
+    *,
+    strict: bool = False,
+) -> CurriculumV2Config:
+    """Build a :class:`CurriculumV2Config` from ``configs/training.yaml``.
+
+    Args:
+        config_dir: Directory holding ``training.yaml``.
+        strict: Raise :class:`ValueError` when the YAML sets keys that cannot be
+            mapped, instead of logging a warning. Useful in tests and for
+            operators who want a run to abort rather than train with a setting
+            that was silently discarded.
+
+    Returns:
+        The config with YAML values applied over the built-in defaults. Missing
+        file or missing ``curriculum`` section yields the defaults unchanged.
+    """
+    # Imported here: apexfx.config.loader pulls in the app-wide schema, and
+    # importing it at module scope would make this module cyclic.
+    from apexfx.config.loader import load_yaml
+
+    path = Path(config_dir) / "training.yaml"
+    raw = load_yaml(path)
+    if not raw:
+        logger.warning("training.yaml not found — using built-in defaults", path=str(path))
+        return CurriculumV2Config()
+
+    defaults = CurriculumV2Config()
+    defaults_by_name = {s.name: s for s in defaults.stages}
+    ignored: list[str] = []
+    updates: dict[str, Any] = {}
+
+    curriculum = raw.get("curriculum") or {}
+    raw_stages = curriculum.get("stages")
+    if raw_stages:
+        updates["stages"] = [
+            _stage_from_yaml(entry, defaults_by_name, ignored) for entry in raw_stages
+        ]
+    for key in curriculum:
+        if key != "stages":
+            ignored.append(f"curriculum.{key}")
+
+    for section, values in raw.items():
+        if section == "curriculum" or not isinstance(values, dict):
+            continue
+        for key, value in values.items():
+            field = _TOP_LEVEL_KEY_MAP.get(f"{section}.{key}")
+            if field is not None:
+                updates[field] = value
+
+    # early_stopping / checkpointing are nested models with their own names.
+    early = raw.get("early_stopping") or {}
+    if early:
+        es_updates: dict[str, Any] = {}
+        for key, value in early.items():
+            if key == "patience":
+                es_updates["patience"] = value
+            elif key == "min_delta":
+                es_updates["min_delta_reward"] = value
+            elif key == "enabled":
+                es_updates["enabled"] = value
+            else:
+                ignored.append(f"early_stopping.{key}")
+        if es_updates:
+            updates["early_stopping"] = defaults.early_stopping.model_copy(update=es_updates)
+
+    ckpt = raw.get("checkpointing") or {}
+    if ckpt:
+        ck_updates: dict[str, Any] = {}
+        for key, value in ckpt.items():
+            if key in {"save_freq", "keep_best_n"}:
+                ck_updates[key] = value
+            else:
+                ignored.append(f"checkpointing.{key}")
+        if ck_updates:
+            updates["checkpointing"] = defaults.checkpointing.model_copy(update=ck_updates)
+
+    config = defaults.model_copy(update=updates)
+
+    if ignored:
+        message = (
+            "training.yaml sets keys that CurriculumV2Config cannot represent; "
+            "they are NOT in effect"
+        )
+        if strict:
+            raise ValueError(f"{message}: {sorted(ignored)}")
+        logger.warning(message, keys=sorted(ignored))
+
+    logger.info(
+        "Loaded curriculum v2 config from YAML",
+        path=str(path),
+        n_stages=config.n_stages,
+        total_timesteps=config.total_timesteps,
+        ignored_keys=len(ignored),
+    )
+    return config

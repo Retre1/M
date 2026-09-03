@@ -11,16 +11,15 @@ Tests the full flow:
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import numpy as np
 import pandas as pd
-import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _generate_ohlcv_bars(n: int = 500, pair: str = "EURUSD") -> pd.DataFrame:
     """Generate realistic synthetic OHLCV bar data."""
@@ -34,19 +33,21 @@ def _generate_ohlcv_bars(n: int = 500, pair: str = "EURUSD") -> pd.DataFrame:
     volume = np.random.randint(100, 10000, n).astype(float)
     tick_volume = volume * np.random.uniform(1, 5, n)
     spread = np.random.uniform(0.00005, 0.00020, n)
-    start = datetime(2025, 1, 1, 0, 0, tzinfo=timezone.utc)
+    start = datetime(2025, 1, 1, 0, 0, tzinfo=UTC)
     times = [start + timedelta(hours=i) for i in range(n)]
 
-    return pd.DataFrame({
-        "time": times,
-        "open": opn,
-        "high": high,
-        "low": low,
-        "close": close,
-        "tick_volume": tick_volume,
-        "volume": volume,
-        "spread": spread,
-    })
+    return pd.DataFrame(
+        {
+            "time": times,
+            "open": opn,
+            "high": high,
+            "low": low,
+            "close": close,
+            "tick_volume": tick_volume,
+            "volume": volume,
+            "spread": spread,
+        }
+    )
 
 
 def _generate_bars_with_cot(n: int = 500) -> pd.DataFrame:
@@ -77,12 +78,14 @@ def _generate_bars_with_cot(n: int = 500) -> pd.DataFrame:
 # 1. Feature Pipeline End-to-End
 # ---------------------------------------------------------------------------
 
+
 class TestFeaturePipelineIntegration:
     """End-to-end tests for the full feature pipeline."""
 
     def test_default_pipeline_runs_without_errors(self):
         """Full pipeline with all default extractors produces valid output."""
         from apexfx.features.pipeline import FeaturePipeline
+
         pipeline = FeaturePipeline(normalize=False)
         bars = _generate_ohlcv_bars(500)
 
@@ -93,11 +96,18 @@ class TestFeaturePipelineIntegration:
         assert len(result.columns) > len(bars.columns)
         # No inf values
         numeric_cols = result.select_dtypes(include=[np.number]).columns
-        assert not np.any(np.isinf(result[numeric_cols].values[np.isfinite(result[numeric_cols].values) | np.isnan(result[numeric_cols].values)]))
+        assert not np.any(
+            np.isinf(
+                result[numeric_cols].values[
+                    np.isfinite(result[numeric_cols].values) | np.isnan(result[numeric_cols].values)
+                ]
+            )
+        )
 
     def test_pipeline_with_normalization(self):
         """Pipeline with z-score normalization produces bounded features."""
         from apexfx.features.pipeline import FeaturePipeline
+
         pipeline = FeaturePipeline(normalize=True)
         bars = _generate_ohlcv_bars(500)
 
@@ -115,6 +125,7 @@ class TestFeaturePipelineIntegration:
     def test_pipeline_feature_count_matches(self):
         """Pipeline reports correct number of features via property."""
         from apexfx.features.pipeline import FeaturePipeline
+
         pipeline = FeaturePipeline(normalize=False)
         bars = _generate_ohlcv_bars(300)
         result = pipeline.compute(bars)
@@ -129,6 +140,7 @@ class TestFeaturePipelineIntegration:
     def test_incremental_compute_matches(self):
         """Incremental computation for live trading matches batch."""
         from apexfx.features.pipeline import FeaturePipeline
+
         pipeline = FeaturePipeline(normalize=False)
         bars = _generate_ohlcv_bars(300)
 
@@ -154,12 +166,14 @@ class TestFeaturePipelineIntegration:
 # 2. Phase 7 Feature Extractors Integration
 # ---------------------------------------------------------------------------
 
+
 class TestPhase7FeaturesIntegration:
     """Test new Phase 7 extractors work within the pipeline context."""
 
     def test_cot_extractor_with_pipeline_data(self):
         """COT extractor produces valid features from realistic data."""
         from apexfx.features.cot import COTExtractor
+
         ext = COTExtractor(z_score_lookback=10)
 
         bars = _generate_bars_with_cot(500)
@@ -177,15 +191,18 @@ class TestPhase7FeaturesIntegration:
     def test_seasonal_extractor_full_year(self):
         """Seasonal extractor handles a full year of data."""
         from apexfx.features.seasonal import SeasonalExtractor
+
         ext = SeasonalExtractor()
 
         # Generate a full year of H1 bars
         n = 24 * 252  # ~252 trading days
-        start = datetime(2025, 1, 1, tzinfo=timezone.utc)
-        bars = pd.DataFrame({
-            "time": [start + timedelta(hours=i) for i in range(n)],
-            "close": np.random.uniform(1.05, 1.15, n),
-        })
+        start = datetime(2025, 1, 1, tzinfo=UTC)
+        bars = pd.DataFrame(
+            {
+                "time": [start + timedelta(hours=i) for i in range(n)],
+                "close": np.random.uniform(1.05, 1.15, n),
+            }
+        )
 
         result = ext.extract(bars)
         assert len(result) == n
@@ -225,9 +242,9 @@ class TestPhase7FeaturesIntegration:
 
     def test_all_phase7_extractors_together(self):
         """All Phase 7 extractors produce compatible output shapes."""
+        from apexfx.features.central_bank import CentralBankExtractor
         from apexfx.features.cot import COTExtractor
         from apexfx.features.seasonal import SeasonalExtractor
-        from apexfx.features.central_bank import CentralBankExtractor
 
         bars = _generate_bars_with_cot(200)
 
@@ -253,6 +270,7 @@ class TestPhase7FeaturesIntegration:
 # 3. Dynamic Correlations → Portfolio Manager Integration
 # ---------------------------------------------------------------------------
 
+
 class TestDynamicCorrelationIntegration:
     """Tests that dynamic correlations feed correctly into portfolio decisions."""
 
@@ -260,8 +278,6 @@ class TestDynamicCorrelationIntegration:
         """When dynamic correlations are low, previously blocked trades pass."""
         from apexfx.live.portfolio_manager import (
             DynamicCorrelationTracker,
-            PortfolioManager,
-            _correlation_tracker,
         )
 
         # Create a fresh tracker with zero correlation between EURUSD and GBPUSD
@@ -311,6 +327,7 @@ class TestDynamicCorrelationIntegration:
 # 4. Risk Manager Integration (without torch)
 # ---------------------------------------------------------------------------
 
+
 class TestRiskManagerIntegration:
     """Integration tests for the risk management pipeline."""
 
@@ -322,7 +339,7 @@ class TestRiskManagerIntegration:
 
         # Start of day
         assert guard.update(100000)  # OK
-        assert guard.update(99000)   # 1% loss — OK
+        assert guard.update(99000)  # 1% loss — OK
         assert not guard.update(98000)  # 2% loss — should trigger
         assert not guard.update(98000)  # Still blocked
 
@@ -365,13 +382,13 @@ class TestRiskManagerIntegration:
         guard = WeekendGapGuard(close_before_hour_utc=20)
 
         # Friday 21:00 UTC
-        friday_late = datetime(2025, 1, 3, 21, 0, tzinfo=timezone.utc)
+        friday_late = datetime(2025, 1, 3, 21, 0, tzinfo=UTC)
         should_block, scale = guard.check(friday_late)
         assert should_block
         assert scale == 0.0
 
         # Monday 10:00 UTC
-        monday = datetime(2025, 1, 6, 10, 0, tzinfo=timezone.utc)
+        monday = datetime(2025, 1, 6, 10, 0, tzinfo=UTC)
         should_block, scale = guard.check(monday)
         assert not should_block
         assert scale == 1.0
@@ -398,6 +415,7 @@ class TestRiskManagerIntegration:
 # 5. COT Fetcher → COT Extractor Integration
 # ---------------------------------------------------------------------------
 
+
 class TestCOTDataIntegration:
     """Test COT data flows from fetcher to extractor."""
 
@@ -410,16 +428,18 @@ class TestCOTDataIntegration:
         data = COTData()
         data.records["EUR"] = []
         for i in range(10):
-            data.records["EUR"].append(COTRecord(
-                report_date=datetime(2025, 1, 7, tzinfo=timezone.utc) + timedelta(weeks=i),
-                currency="EUR",
-                speculative_long=150000 + i * 1000,
-                speculative_short=100000 + i * 500,
-                speculative_net=50000 + i * 500,
-                commercial_net=-30000,
-                open_interest=500000,
-                spec_net_pct=0.10 + i * 0.001,
-            ))
+            data.records["EUR"].append(
+                COTRecord(
+                    report_date=datetime(2025, 1, 7, tzinfo=UTC) + timedelta(weeks=i),
+                    currency="EUR",
+                    speculative_long=150000 + i * 1000,
+                    speculative_short=100000 + i * 500,
+                    speculative_net=50000 + i * 500,
+                    commercial_net=-30000,
+                    open_interest=500000,
+                    spec_net_pct=0.10 + i * 0.001,
+                )
+            )
 
         df = fetcher.to_dataframe(data, "EUR")
         assert len(df) == 10
@@ -437,31 +457,33 @@ class TestCOTDataIntegration:
         data = COTData()
         data.records["EUR"] = []
         for week in range(8):
-            data.records["EUR"].append(COTRecord(
-                report_date=datetime(2025, 1, 7, tzinfo=timezone.utc) + timedelta(weeks=week),
-                currency="EUR",
-                speculative_net=50000 + week * 2000,
-                commercial_net=-30000,
-                open_interest=500000,
-                spec_net_pct=0.10 + week * 0.004,
-            ))
+            data.records["EUR"].append(
+                COTRecord(
+                    report_date=datetime(2025, 1, 7, tzinfo=UTC) + timedelta(weeks=week),
+                    currency="EUR",
+                    speculative_net=50000 + week * 2000,
+                    commercial_net=-30000,
+                    open_interest=500000,
+                    spec_net_pct=0.10 + week * 0.004,
+                )
+            )
 
         cot_df = fetcher.to_dataframe(data, "EUR")
 
         # Create H1 bars for the same period
         n = 24 * 56  # 56 days of H1 bars
-        start = datetime(2025, 1, 1, tzinfo=timezone.utc)
-        bars = pd.DataFrame({
-            "time": [start + timedelta(hours=i) for i in range(n)],
-            "close": np.random.uniform(1.05, 1.15, n),
-        })
+        start = datetime(2025, 1, 1, tzinfo=UTC)
+        bars = pd.DataFrame(
+            {
+                "time": [start + timedelta(hours=i) for i in range(n)],
+                "close": np.random.uniform(1.05, 1.15, n),
+            }
+        )
 
         # Merge using merge_asof (forward-fill weekly COT into H1 bars)
         bars_sorted = bars.sort_values("time")
         cot_sorted = cot_df.sort_values("time")
-        merged = pd.merge_asof(
-            bars_sorted, cot_sorted, on="time", direction="backward"
-        )
+        merged = pd.merge_asof(bars_sorted, cot_sorted, on="time", direction="backward")
 
         assert len(merged) == n
         # COT columns should be present
@@ -473,6 +495,7 @@ class TestCOTDataIntegration:
 # ---------------------------------------------------------------------------
 # 6. Full Pipeline with Phase 7 Extractors
 # ---------------------------------------------------------------------------
+
 
 class TestFullPipelineWithPhase7:
     """Test running the full pipeline with Phase 7 extractors injected."""
@@ -497,8 +520,8 @@ class TestFullPipelineWithPhase7:
 
     def test_pipeline_with_cot_extractor(self):
         """COT extractor integrates into FeaturePipeline."""
-        from apexfx.features.pipeline import FeaturePipeline
         from apexfx.features.cot import COTExtractor
+        from apexfx.features.pipeline import FeaturePipeline
 
         pipeline = FeaturePipeline(
             extractors=[COTExtractor(z_score_lookback=5)],
@@ -513,10 +536,10 @@ class TestFullPipelineWithPhase7:
 
     def test_pipeline_with_all_phase7_extractors(self):
         """All Phase 7 extractors work together in a pipeline."""
-        from apexfx.features.pipeline import FeaturePipeline
-        from apexfx.features.cot import COTExtractor
-        from apexfx.features.seasonal import SeasonalExtractor
         from apexfx.features.central_bank import CentralBankExtractor
+        from apexfx.features.cot import COTExtractor
+        from apexfx.features.pipeline import FeaturePipeline
+        from apexfx.features.seasonal import SeasonalExtractor
 
         pipeline = FeaturePipeline(
             extractors=[
@@ -537,9 +560,9 @@ class TestFullPipelineWithPhase7:
     def test_mixed_pipeline_default_plus_phase7(self):
         """Phase 7 extractors work alongside default extractors."""
         from apexfx.features.pipeline import FeaturePipeline
+        from apexfx.features.regime import RegimeExtractor
         from apexfx.features.seasonal import SeasonalExtractor
         from apexfx.features.volume_profile import VolumeProfileExtractor
-        from apexfx.features.regime import RegimeExtractor
 
         pipeline = FeaturePipeline(
             extractors=[
@@ -554,7 +577,11 @@ class TestFullPipelineWithPhase7:
         result = pipeline.compute(bars)
 
         # Should have features from all three extractors
-        assert "poc_distance" in result.columns or "vp_poc_distance" in result.columns or "volume_profile_poc" in result.columns
+        assert (
+            "poc_distance" in result.columns
+            or "vp_poc_distance" in result.columns
+            or "volume_profile_poc" in result.columns
+        )
         assert "seasonal_month_vol" in result.columns
         assert len(result) == 300
 
@@ -563,12 +590,14 @@ class TestFullPipelineWithPhase7:
 # 7. Data Quality Checks
 # ---------------------------------------------------------------------------
 
+
 class TestDataQualityIntegration:
     """Ensure no silent data corruption in the pipeline."""
 
     def test_no_infinite_values_in_features(self):
         """Feature pipeline should never produce infinite values."""
         from apexfx.features.pipeline import FeaturePipeline
+
         pipeline = FeaturePipeline(normalize=False)
         bars = _generate_ohlcv_bars(500)
 
@@ -576,13 +605,12 @@ class TestDataQualityIntegration:
         numeric = result.select_dtypes(include=[np.number])
         inf_mask = np.isinf(numeric.values)
         inf_locations = np.argwhere(inf_mask)
-        assert len(inf_locations) == 0, (
-            f"Found {len(inf_locations)} infinite values in features"
-        )
+        assert len(inf_locations) == 0, f"Found {len(inf_locations)} infinite values in features"
 
     def test_feature_dtypes_are_numeric(self):
         """All feature columns should be numeric (float or int)."""
         from apexfx.features.pipeline import FeaturePipeline
+
         pipeline = FeaturePipeline(normalize=False)
         bars = _generate_ohlcv_bars(300)
 
@@ -590,12 +618,14 @@ class TestDataQualityIntegration:
         feature_cols = [c for c in result.columns if c not in bars.columns]
 
         for col in feature_cols:
-            assert result[col].dtype in [np.float64, np.float32, np.int64, np.int32, float], \
+            assert result[col].dtype in [np.float64, np.float32, np.int64, np.int32, float], (
                 f"Feature {col} has non-numeric dtype: {result[col].dtype}"
+            )
 
     def test_nan_ratio_acceptable(self):
         """NaN ratio in features should be reasonable after warmup."""
         from apexfx.features.pipeline import FeaturePipeline
+
         pipeline = FeaturePipeline(normalize=False)
         bars = _generate_ohlcv_bars(500)
 
